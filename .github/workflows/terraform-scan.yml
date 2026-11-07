@@ -1,0 +1,36 @@
+name: Terraform scan
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+
+# A new push to the same branch cancels the run that is still going
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checkov:
+    name: Terraform scan (Checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Checkov
+        run: pip install checkov
+
+      # Fails the job if any check fails.
+      # Accepted findings are skipped in the code with a written reason.
+      - name: Scan the Terraform code
+        run: checkov --directory terraform --framework terraform --compact
