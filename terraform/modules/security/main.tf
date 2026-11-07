@@ -1,4 +1,5 @@
 resource "azurerm_network_security_group" "main" {
+  #checkov:skip=CKV_AZURE_160:Port 80 must be open to the internet so users can open Findr in their browser. Only port 80 is public. SSH is limited to our IP and all other traffic is denied.
   name                = "${var.name_prefix}-nsg"
   location            = var.location
   resource_group_name = var.resource_group_name

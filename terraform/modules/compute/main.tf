@@ -8,6 +8,7 @@ resource "azurerm_public_ip" "main" {
 }
 
 resource "azurerm_network_interface" "main" {
+  #checkov:skip=CKV_AZURE_119:The VM needs a public IP so users can reach the app and Ansible can connect over SSH. A load balancer or bastion is too expensive for our student credit. The NSG limits open ports to 22 (our IP only) and 80.
   name                = "${var.name_prefix}-nic"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -28,6 +29,9 @@ resource "azurerm_linux_virtual_machine" "main" {
   size                  = var.vm_size
   admin_username        = var.admin_username
   network_interface_ids = [azurerm_network_interface.main.id]
+
+  # No VM extensions. We configure the server with Ansible over SSH (fixes CKV_AZURE_50)
+  allow_extension_operations = false
 
   # Only SSH keys, no passwords
   disable_password_authentication = true
