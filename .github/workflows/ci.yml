@@ -70,10 +70,61 @@ jobs:
           path: frontend/dist
           if-no-files-found: error
 
+  image-scan:
+    name: Image scan (Trivy)
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: findr:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Pinned to a commit, not a tag: trivy-action tags were hijacked in
+      # March 2026. v0.35.0 was the one release that was never affected.
+      # Fails on HIGH or CRITICAL problems that already have a fix.
+      # Accepted findings go in .trivyignore with a reason in SECURITY.md.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: findr:scan
+          version: v0.69.3
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      # A full report of every severity, kept even when the scan fails,
+      # so we can write up the findings in SECURITY.md
+      - name: Write the full report
+        if: always()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: findr:scan
+          skip-setup-trivy: true
+          output: trivy-report.txt
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+          if-no-files-found: ignore
+
   docker:
     name: Docker build
-    # Only build the image once the code passes lint and tests
-    needs: lint-and-test
+    # Only build and publish an image that passed the tests and the image scan
+    needs: [lint-and-test, image-scan]
     runs-on: ubuntu-latest
     # packages: write lets this job publish to GitHub Container Registry
     permissions:
