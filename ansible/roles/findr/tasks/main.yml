@@ -1,0 +1,51 @@
+- name: Log in to GitHub's image storage (only if the image is private)
+  community.docker.docker_login:
+    registry_url: ghcr.io
+    username: "{{ vault_ghcr_username }}"
+    password: "{{ vault_ghcr_token }}"
+  when: vault_ghcr_token | length > 0
+  no_log: true
+
+- name: Create a private network so the app and database can talk
+  community.docker.docker_network:
+    name: findr-net
+
+- name: Start MongoDB (not open to the internet)
+  community.docker.docker_container:
+    name: findr-db
+    image: mongo:7.0
+    restart_policy: unless-stopped
+    networks:
+      - name: findr-net
+    volumes:
+      - findr-mongo-data:/data/db
+    env:
+      MONGO_INITDB_ROOT_USERNAME: "{{ mongo_user }}"
+      MONGO_INITDB_ROOT_PASSWORD: "{{ vault_mongo_password }}"
+
+- name: Download the Findr app image
+  community.docker.docker_image:
+    name: "{{ findr_image }}:{{ findr_image_tag }}"
+    source: pull
+
+- name: Start the Findr app
+  community.docker.docker_container:
+    name: findr-app
+    image: "{{ findr_image }}:{{ findr_image_tag }}"
+    restart_policy: unless-stopped
+    networks:
+      - name: findr-net
+    published_ports:
+      - "{{ app_public_port }}:3000"
+    env:
+      PORT: "3000"
+      MONGODB_URI: "mongodb://{{ mongo_user }}:{{ vault_mongo_password }}@findr-db:27017/{{ mongo_db }}?authSource=admin"
+
+- name: Wait until the app answers
+  ansible.builtin.uri:
+    url: "http://localhost:{{ app_public_port }}"
+    status_code: 200
+  register: app_check
+  retries: 10
+  delay: 5
+  until: app_check.status == 200

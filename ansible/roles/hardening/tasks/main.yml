@@ -1,0 +1,67 @@
+- name: Install the firewall and fail2ban
+  ansible.builtin.apt:
+    name:
+      - ufw
+      - fail2ban
+      - python3-systemd
+    state: present
+    update_cache: true
+
+# Firewall
+
+- name: Allow SSH, but slow down anyone who connects too many times
+  community.general.ufw:
+    rule: limit
+    port: "22"
+    proto: tcp
+
+- name: Allow website traffic
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop: "{{ firewall_open_ports }}"
+
+- name: Block everything else coming in and switch the firewall on
+  community.general.ufw:
+    state: enabled
+    direction: incoming
+    policy: deny
+
+# SSH: no root login, no password login
+
+- name: Turn off root login and password login
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/00-hardening.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+    mode: "0644"
+  notify: Restart SSH
+
+- name: Check the SSH settings are valid before restarting
+  ansible.builtin.command: sshd -t
+  changed_when: false
+
+# fail2ban: block repeated failed logins
+
+- name: Ban anyone who fails to log in 5 times in 10 minutes
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.local
+    content: |
+      [sshd]
+      enabled = true
+      backend = systemd
+      maxretry = 5
+      findtime = 10m
+      bantime = 1h
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Make sure fail2ban is running and starts on boot
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: true

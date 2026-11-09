@@ -1,0 +1,4 @@
+# Website ports the firewall should allow.
+firewall_open_ports:
+  - "80"
+  - "443"
