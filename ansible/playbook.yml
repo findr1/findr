@@ -5,3 +5,6 @@
   tasks:
     - name: Check we can reach the server
       ansible.builtin.ping:
+
+  roles:
+    - docker
