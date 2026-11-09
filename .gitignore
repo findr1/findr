@@ -17,6 +17,10 @@ secrets.json
 *.crt
 *.p12
 *.pfx
+# SSH private keys (public .pub keys are fine) and the Ansible Vault password
+id_*
+!id_*.pub
+.vault_pass
 
 # ========================
 # Build Artifacts
