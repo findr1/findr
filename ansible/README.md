@@ -161,6 +161,12 @@ This sits behind the Azure firewall from Terraform, which already limits SSH to 
 - Both containers restart on their own after a crash or reboot (`unless-stopped`).
 - Waits until the app answers on port 80, so the run only succeeds if Findr is really up.
 
+## Tested on the real server
+
+We ran the playbook on the Azure VM that Terraform created (`4.221.171.155`, Ubuntu). Findr opens at the server's public IP on port 80, with the app and MongoDB both running in Docker:
+
+![Findr running at the server's public IP after the playbook ran](../docs/images/ansible-app-on-server.png)
+
 ## Troubleshooting
 
 | Problem | Fix |
