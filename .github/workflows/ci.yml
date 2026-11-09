@@ -70,6 +70,44 @@ jobs:
           path: frontend/dist
           if-no-files-found: error
 
+  dependency-scan:
+    name: Dependency scan (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [backend, frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # npm audit reads package-lock.json, so no install is needed.
+      # Fails on HIGH or CRITICAL problems. Low and moderate ones are
+      # listed in SECURITY.md with the reason we accept them.
+      - name: Scan the npm packages
+        run: npm audit --audit-level=high
+
+      # A full report of every severity, kept even when the scan fails
+      - name: Write the full report
+        if: always()
+        run: npm audit --json > npm-audit.json || true
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ matrix.app }}
+          path: ${{ matrix.app }}/npm-audit.json
+          if-no-files-found: ignore
+
   image-scan:
     name: Image scan (Trivy)
     needs: lint-and-test
@@ -123,8 +161,8 @@ jobs:
 
   docker:
     name: Docker build
-    # Only build and publish an image that passed the tests and the image scan
-    needs: [lint-and-test, image-scan]
+    # Only build and publish an image that passed the tests and both scans
+    needs: [lint-and-test, dependency-scan, image-scan]
     runs-on: ubuntu-latest
     # packages: write lets this job publish to GitHub Container Registry
     permissions:
