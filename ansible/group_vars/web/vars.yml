@@ -4,11 +4,11 @@ ansible_ssh_private_key_file: ~/.ssh/id_ed25519
 
 # App version to deploy
 findr_image: ghcr.io/findr1/findr
-findr_image_tag: CHANGE_ME
+findr_image_tag: d6856dc4bb655bfbdce7518bf3951f08e9a15124
 
 # web port 80
 app_public_port: 80
 
-# Database settings 
+# Database settings
 mongo_user: findr
 mongo_db: findr
