@@ -1,0 +1,7 @@
+- name: Set up Findr server
+  hosts: web
+  become: true
+
+  tasks:
+    - name: Check we can reach the server
+      ansible.builtin.ping:
