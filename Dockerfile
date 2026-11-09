@@ -33,6 +33,11 @@ COPY --chown=node:node backend/package.json ./
 COPY --chown=node:node backend/src ./src
 COPY --from=frontend --chown=node:node /app/frontend/dist ./public
 
+# The app runs with node only. Remove npm, npx and corepack that come with the
+# base image: Trivy found HIGH problems in npm's own packages (see SECURITY.md)
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+  /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+
 # Don't run as root. The node user comes with the base image
 USER node
 
