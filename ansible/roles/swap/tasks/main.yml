@@ -1,0 +1,37 @@
+# The server has about 1 GB of memory. MongoDB and the app need more than
+# that at start-up, so we add a swap file the kernel can use as extra memory.
+
+- name: Check if the swap file already exists
+  ansible.builtin.stat:
+    path: "{{ swap_file }}"
+  register: swap_stat
+
+- name: Create the swap file
+  ansible.builtin.command: fallocate -l {{ swap_size }} {{ swap_file }}
+  when: not swap_stat.stat.exists
+
+- name: Only root can read the swap file
+  ansible.builtin.file:
+    path: "{{ swap_file }}"
+    mode: "0600"
+
+- name: Format the file as swap
+  ansible.builtin.command: mkswap {{ swap_file }}
+  when: not swap_stat.stat.exists
+
+- name: Check if swap is already on
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: swap_on
+  changed_when: false
+
+- name: Turn the swap on
+  ansible.builtin.command: swapon {{ swap_file }}
+  when: swap_file not in swap_on.stdout
+
+- name: Keep the swap on after a restart
+  ansible.posix.mount:
+    src: "{{ swap_file }}"
+    path: none
+    fstype: swap
+    opts: sw
+    state: present
