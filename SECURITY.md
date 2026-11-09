@@ -70,7 +70,7 @@ Result: **12 passed, 0 failed, 3 skipped with a reason.**
 - The moderate one is a denial of service from a crafted pattern, and we only feed these tools our own code.
 - The only fix npm offers is a major version change that breaks our setup, for example `jest@25`.
 - We'll take the update when the tools release a fixed version.
-- `shadcn` is listed under `dependencies`, but it's a command-line tool and is never bundled into the website. Moving it to `devDependencies` would make that clearer.
+- `shadcn` is a command-line tool that is never bundled into the website. We moved it from `dependencies` to `devDependencies` (#91), so the package list now shows that too.
 
 **A2. zlib (moderate) in the Alpine base image.** The fix is in `zlib 1.4-r0`, which isn't in our pinned `node:22.23-alpine3.24` image yet. We pin the base image so every build is the same, so we don't patch single packages by hand. We'll pick up the fix when we bump the base image. It's below our high threshold, so it doesn't block merges.
 
