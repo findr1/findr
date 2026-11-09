@@ -1,0 +1,14 @@
+# log in
+ansible_user: azureuser
+ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+
+# App version to deploy
+findr_image: ghcr.io/findr1/findr
+findr_image_tag: CHANGE_ME
+
+# web port 80
+app_public_port: 80
+
+# Database settings 
+mongo_user: findr
+mongo_db: findr
