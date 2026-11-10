@@ -1,0 +1,16 @@
+# Dynamic inventory: asks Azure for our server instead of typing its IP.
+# Uses your "az login". Run with: ansible-playbook -i inventory/azure_rm.yml playbook.yml
+plugin: azure.azcollection.azure_rm
+auth_source: cli
+
+# Only look in the resource group Terraform creates
+include_vm_resource_groups:
+  - findr-dev-rg
+
+# Connect to the server's public IP
+hostvar_expressions:
+  ansible_host: public_ipv4_address | first
+
+# Every VM tagged project=findr goes in the "web" group, like hosts.ini
+conditional_groups:
+  web: tags.project | default('') == 'findr'

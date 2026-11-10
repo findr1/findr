@@ -1,6 +1,6 @@
 # log in
 ansible_user: azureuser
-ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+ansible_ssh_private_key_file: ~/.ssh/findr
 
 # App version to deploy
 findr_image: ghcr.io/findr1/findr
