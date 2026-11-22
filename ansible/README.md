@@ -6,13 +6,14 @@ This folder sets up the server that Terraform creates, so that Findr runs on it.
 
 | Path | What it is |
 |------|------------|
-| `ansible.cfg` | Settings: which inventory to use, and no SSH host-key prompt the first time we connect |
-| `inventory/hosts.ini` | The server to set up, in the `web` group |
+| `ansible.cfg` | Settings: which inventory to use by default, and how SSH checks the server's identity (see [Inventory](#inventory)) |
+| `inventory/hosts.ini` | Static inventory: the server's IP, typed in by hand, in the `web` group |
+| `inventory/azure_rm.yml` | Dynamic inventory: asks Azure for the server, so nobody copies IPs |
 | `group_vars/web/vars.yml` | Settings for the `web` group: SSH user and key, app image and port, database name |
 | `group_vars/web/vault.yml` | Secrets, encrypted with Ansible Vault: the database password and the GitHub registry login |
 | `requirements.yml` | Ansible collections the roles need |
-| `playbook.yml` | Runs the three roles on the `web` group |
-| `roles/` | The steps, in three roles. See [What each role does](#what-each-role-does) |
+| `playbook.yml` | Runs the four roles on the `web` group |
+| `roles/` | The steps, in four roles. See [What each role does](#what-each-role-does) |
 
 ## Prerequisites
 
@@ -30,8 +31,8 @@ Ansible doesn't run on Windows. Windows users run everything below in **WSL** (U
 3. **The group's SSH private key**, the pair of the public key Terraform put on the server. Put it in `~/.ssh/` inside WSL and make it readable only by you, or SSH will refuse to use it:
 
    ```bash
-   cp /mnt/c/Users/<you>/Downloads/id_ed25519 ~/.ssh/id_ed25519
-   chmod 600 ~/.ssh/id_ed25519
+   cp /mnt/c/Users/<you>/Downloads/findr ~/.ssh/findr
+   chmod 600 ~/.ssh/findr
    ```
 
 4. **The vault password**, shared privately by the team. Never commit it.
@@ -51,7 +52,39 @@ Ansible doesn't run on Windows. Windows users run everything below in **WSL** (U
 
 ## Inventory
 
-The inventory tells Ansible which server to set up. Put the server's IP in [`inventory/hosts.ini`](inventory/hosts.ini):
+The inventory tells Ansible which server to set up. There are two ways to give it one: the dynamic inventory asks Azure, and the static inventory uses an IP you type in. Both put the server in the `web` group, so the playbook works the same either way.
+
+The first time Ansible connects to a server, it saves the server's SSH key. If that key changes later, Ansible refuses to connect, because it could be a different machine pretending to be ours (`StrictHostKeyChecking=accept-new` in [`ansible.cfg`](ansible.cfg)). If Bonae destroys the server and creates it again, remove the old saved key with `ssh-keygen -R <old IP>`.
+
+### Dynamic inventory (recommended)
+
+[`inventory/azure_rm.yml`](inventory/azure_rm.yml) uses the `azure.azcollection.azure_rm` plugin. It looks in the `findr-dev-rg` resource group that Terraform creates, finds every VM tagged `project=findr` (Terraform adds this tag), and connects to its public IP. If the server is created again with a new IP, nothing needs to change.
+
+It needs two extra things in WSL:
+
+```bash
+# 1. The Azure CLI, then log in with an account on the team's subscription
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+az login
+
+# 2. The Python packages the Azure collection needs
+pipx runpip ansible install -r ~/.ansible/collections/ansible_collections/azure/azcollection/requirements.txt
+```
+
+Check what it finds, then use it with `-i`:
+
+```bash
+ansible-inventory -i inventory/azure_rm.yml --graph
+ansible all -i inventory/azure_rm.yml -m ping
+```
+
+`--graph` should show the Findr VM under `@web`. If the list is empty, run `az account show` to check you're logged in to the right subscription, and check that Terraform has created the server.
+
+To run the playbook with it, add `-i inventory/azure_rm.yml` to the commands in [Run the playbook](#run-the-playbook).
+
+### Static inventory
+
+Without Azure access, put the server's IP in [`inventory/hosts.ini`](inventory/hosts.ini). Ansible uses this file by default:
 
 ```ini
 [web]
@@ -128,9 +161,18 @@ ansible-playbook playbook.yml --ask-vault-pass --list-tasks     # list every tas
 
 ## What each role does
 
-[`playbook.yml`](playbook.yml) runs three roles on the `web` group as root (`become: true`), in this order.
+[`playbook.yml`](playbook.yml) runs four roles on the `web` group as root (`become: true`), in this order.
 
-### 1. `docker`: install Docker
+### 1. `swap`: add extra memory
+
+[`roles/swap`](roles/swap/tasks/main.yml)
+
+- The server has about 1 GB of memory, and MongoDB and the app need more than that when they start. This role creates a 2 GB swap file (`/swapfile`), which the server can use as extra memory.
+- Only root can read the file, and it stays on after a restart (through `/etc/fstab`).
+- It checks first, and only creates or turns on the swap file if it isn't there yet, so a second run changes nothing.
+- The file path and size are in [`defaults/main.yml`](roles/swap/defaults/main.yml).
+
+### 2. `docker`: install Docker
 
 [`roles/docker`](roles/docker/tasks/main.yml)
 
@@ -139,7 +181,7 @@ ansible-playbook playbook.yml --ask-vault-pass --list-tasks     # list every tas
 - Starts Docker and turns it on at boot.
 - Adds the login user to the `docker` group, so it can run `docker` without `sudo`.
 
-### 2. `hardening`: lock the server down
+### 3. `hardening`: lock the server down
 
 [`roles/hardening`](roles/hardening/tasks/main.yml)
 
@@ -150,7 +192,7 @@ ansible-playbook playbook.yml --ask-vault-pass --list-tasks     # list every tas
 
 This sits behind the Azure firewall from Terraform, which already limits SSH to our IP. The two layers protect the server even if one of them is set up wrong.
 
-### 3. `findr`: deploy the app
+### 4. `findr`: deploy the app
 
 [`roles/findr`](roles/findr/tasks/main.yml)
 
@@ -161,12 +203,20 @@ This sits behind the Azure firewall from Terraform, which already limits SSH to 
 - Both containers restart on their own after a crash or reboot (`unless-stopped`).
 - Waits until the app answers on port 80, so the run only succeeds if Findr is really up.
 
+## Tested on the real server
+
+We ran the playbook on the Azure VM that Terraform created (`4.221.171.155`, Ubuntu). Findr opens at the server's public IP on port 80, with the app and MongoDB both running in Docker:
+
+![Findr running at the server's public IP after the playbook ran](../docs/images/ansible-app-on-server.png)
+
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
 | `UNREACHABLE` / `Permission denied (publickey)` | Check the IP in `hosts.ini`, check that the key in `vars.yml` pairs with the one Terraform used, and run `chmod 600` on the key |
 | `Connection timed out` | The Terraform firewall only allows SSH from `my_ip_cidr`. If your IP changed, ask Bonae to update it and apply again |
+| `Host key verification failed` / `REMOTE HOST IDENTIFICATION HAS CHANGED` | The server was created again and has a new key. Run `ssh-keygen -R <IP>` and try again |
+| `--graph` shows no hosts in `@web` | Run `az login`, check `az account show`, and check the VM exists in `findr-dev-rg` |
 | `[WARNING]: Ansible is being run in a world writable directory` | You're in `/mnt/c/...`. Clone the repo into your WSL home folder instead |
 | `couldn't resolve module/action 'community.docker...'` | Run `ansible-galaxy collection install -r requirements.yml` |
 | `Attempting to decrypt but no vault secrets found` | Add `--ask-vault-pass` |
