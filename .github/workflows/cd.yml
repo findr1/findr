@@ -21,6 +21,8 @@ env:
   # Priorities 110-199 are kept free for this rule in the Terraform code.
   BASTION_NSG: findr-dev-bastion-nsg
   RUNNER_RULE: allow-ssh-from-cd-runner
+  # Public IP of the Load Balancer, the app's public address
+  LB_PUBLIC_IP: findr-dev-lb-pip
 
 jobs:
   # 1. Run every CI check again on the merged code: lint, tests,
@@ -121,3 +123,18 @@ jobs:
             --nsg-name "$BASTION_NSG" \
             --name "$RUNNER_RULE"
           echo "SSH rule for the runner removed"
+
+      # Check the live site through the Load Balancer, like a real user.
+      # /api/ready must answer, and must be using the database, not the
+      # in-memory fallback. Retries for about a minute while the app starts.
+      - name: Smoke test the live site
+        run: |
+          LB_IP=$(az network public-ip show --resource-group "$RESOURCE_GROUP" \
+            --name "$LB_PUBLIC_IP" --query ipAddress --output tsv)
+          URL="http://$LB_IP"
+          BODY=$(curl -fsS --retry 12 --retry-delay 5 --retry-all-errors --max-time 10 "$URL/api/ready") \
+            || { echo "::error::$URL/api/ready did not answer"; exit 1; }
+          echo "$BODY"
+          echo "$BODY" | jq -e '.storage == "mongodb"' > /dev/null \
+            || { echo "::error::The app answers but is not using the database"; exit 1; }
+          echo "### Deployed \`${GITHUB_SHA::7}\` to $URL" >> "$GITHUB_STEP_SUMMARY"
