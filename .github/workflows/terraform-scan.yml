@@ -5,10 +5,13 @@ on:
     branches-ignore: [main]
   pull_request:
     branches: [main]
+  # Lets the CD pipeline run this same scan again before it deploys
+  workflow_call:
 
-# A new push to the same branch cancels the run that is still going
+# A new push to the same branch cancels the run that is still going.
+# The name is fixed because github.workflow is the caller's name when CD runs this.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: terraform-scan-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

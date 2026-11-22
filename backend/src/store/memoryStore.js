@@ -34,7 +34,10 @@ export function createMemoryStore() {
 
   async function close() {}
 
+  // Memory is always there, so the memory store is always ready
+  async function ping() {}
+
   reset();
 
-  return { name: "memory", reset, getAll, getById, add, update, close };
+  return { name: "memory", reset, getAll, getById, add, update, close, ping };
 }
