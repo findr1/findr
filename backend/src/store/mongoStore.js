@@ -66,6 +66,26 @@ export async function createMongoStore(uri) {
     return updated ?? undefined;
   }
 
+  // Saves a report on an item. One report per reporter. The check and the
+  // save happen in one step, so two quick clicks can't add two reports.
+  // Returns undefined if the item doesn't exist, otherwise { item, added }.
+  async function addReport(id, report) {
+    const updated = await items.findOneAndUpdate(
+      { id: Number(id), "reports.reporterId": { $ne: report.reporterId } },
+      { $push: { reports: report } },
+      { returnDocument: "after", ...HIDE_MONGO_ID }
+    );
+    if (updated) return { item: updated, added: true };
+    const item = await getById(id);
+    return item ? { item, added: false } : undefined;
+  }
+
+  // Deletes an item for good. Returns true if it existed.
+  async function remove(id) {
+    const result = await items.deleteOne({ id: Number(id) });
+    return result.deletedCount > 0;
+  }
+
   async function close() {
     await client.close();
   }
@@ -81,5 +101,5 @@ export async function createMongoStore(uri) {
     await syncCounter();
   }
 
-  return { name: "mongodb", reset, getAll, getById, add, update, close, ping };
+  return { name: "mongodb", reset, getAll, getById, add, update, addReport, remove, close, ping };
 }
