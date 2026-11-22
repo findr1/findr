@@ -1,0 +1,5 @@
+# The URL a visitor opens. /api/ready also checks the database.
+# On Azure, Ansible replaces this with the Load Balancer's public URL.
+- targets: ["http://app:3000/api/ready"]
+  labels:
+    env: local

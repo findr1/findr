@@ -1,0 +1,85 @@
+# When something counts as a problem.
+# "for" = how long it must stay wrong before we alert, so a short blip
+# doesn't wake anyone up.
+# severity: critical = users are affected now. warning = look at it soon.
+
+groups:
+  - name: findr
+    rules:
+      - alert: SiteDown
+        expr: probe_success{job="website"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Findr is down"
+          description: "The public URL {{ $labels.instance }} has not answered for 2 minutes."
+
+      - alert: AppNotReporting
+        expr: up{job="findr-app"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The Findr app stopped reporting"
+          description: "Prometheus can't read /metrics on {{ $labels.instance }}. The container may have stopped."
+
+      - alert: DatabaseDown
+        expr: findr_db_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The database is not answering"
+          description: "The app can't reach Cosmos DB. Reports can't be saved or loaded."
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(findr_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(findr_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many requests are failing"
+          description: "More than 5% of requests returned a server error (5xx) over the last 5 minutes."
+
+      - alert: SlowResponses
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(findr_http_request_duration_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Findr is slow"
+          description: "1 in 20 requests takes more than 1 second."
+
+      - alert: HighCPU
+        expr: 100 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The server CPU is very busy"
+          description: "CPU on {{ $labels.instance }} has been above 85% for 10 minutes."
+
+      - alert: HighMemory
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The server is almost out of memory"
+          description: "Memory on {{ $labels.instance }} has been above 90% for 10 minutes."
+
+      - alert: DiskAlmostFull
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"}
+            / node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"} * 100 < 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The server disk is almost full"
+          description: "Less than 10% disk space is left on {{ $labels.instance }}."
