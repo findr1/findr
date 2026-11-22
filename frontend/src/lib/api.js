@@ -4,11 +4,11 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
 // Sends a request to the backend and returns the JSON body.
 // Throws an Error with the backend's message when the request fails,
 // so pages can show it to the user.
-async function request(path, options = {}) {
+async function request(path, { headers, ...options } = {}) {
   let res;
   try {
     res = await fetch(`${API_URL}${path}`, {
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       ...options,
     });
   } catch (err) {
@@ -51,4 +51,25 @@ export function claimItem(id, answer) {
 
 export function markReturned(id) {
   return request(`/items/${id}/returned`, { method: "PATCH" });
+}
+
+// reason: spam | fake | wrong-info. reporterId: see lib/reporter.js
+// Returns { message, hidden }. Throws with status 409 if already reported.
+export function reportItem(id, reason, reporterId) {
+  return request(`/items/${id}/report`, { method: "POST", body: JSON.stringify({ reason, reporterId }) });
+}
+
+// Admin only. password is the server's ADMIN_TOKEN
+const asAdmin = (password) => ({ Authorization: `Bearer ${password}` });
+
+export function getReported(password) {
+  return request("/admin/reports", { headers: asAdmin(password) });
+}
+
+export function restoreItem(id, password) {
+  return request(`/admin/items/${id}/restore`, { method: "POST", headers: asAdmin(password) });
+}
+
+export function deleteItem(id, password) {
+  return request(`/admin/items/${id}`, { method: "DELETE", headers: asAdmin(password) });
 }

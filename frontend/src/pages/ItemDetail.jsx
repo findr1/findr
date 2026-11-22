@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ArrowLeft, Calendar, MapPin, PackageCheck } from "lucide-react";
 import ClaimForm from "@/components/ClaimForm";
+import ReportListing from "@/components/ReportListing";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { categories } from "@/data/reportOptions";
@@ -87,6 +88,11 @@ export default function ItemDetail() {
               )}
             </div>
           </article>
+        )}
+        {item && (
+          <div className="mt-4 px-1">
+            <ReportListing itemId={item.id} />
+          </div>
         )}
       </div>
     </main>
