@@ -3,7 +3,7 @@ import { pingStore, storeName } from "../store/itemStore.js";
 // How long to wait for the database before saying "not ready"
 const TIMEOUT_MS = 2000;
 
-function withTimeout(promise, ms) {
+export function withTimeout(promise, ms) {
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error("Database did not answer in time")), ms);

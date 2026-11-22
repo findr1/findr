@@ -2,6 +2,7 @@ import path from "node:path";
 import express from "express";
 import cors from "cors";
 import routes from "./routes/index.js";
+import { countRequests } from "./metrics.js";
 
 // Builds the app without starting the server, so tests can use it directly.
 // When STATIC_DIR is set (in Docker), it also serves the built website.
@@ -11,6 +12,9 @@ export function createApp({ staticDir = process.env.STATIC_DIR } = {}) {
   // Only the frontend address in CORS_ORIGIN may call the API from a browser.
   // Several addresses can be given, separated by commas.
   const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:5173").split(",").map((o) => o.trim());
+
+  // Count every request for Prometheus (served on a separate port)
+  app.use(countRequests);
 
   app.use(cors({ origin: allowedOrigins }));
 

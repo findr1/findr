@@ -41,7 +41,8 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 # Don't run as root. The node user comes with the base image
 USER node
 
-EXPOSE 3000
+# 3000: website and API. 9464: /metrics for Prometheus, kept private.
+EXPOSE 3000 9464
 
 # Docker checks the API every 30 seconds
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
