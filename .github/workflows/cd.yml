@@ -17,6 +17,10 @@ permissions:
 env:
   # The resource group Terraform creates (project-environment-rg)
   RESOURCE_GROUP: findr-dev-rg
+  # Firewall in front of the bastion, and the temporary rule CD adds to it.
+  # Priorities 110-199 are kept free for this rule in the Terraform code.
+  BASTION_NSG: findr-dev-bastion-nsg
+  RUNNER_RULE: allow-ssh-from-cd-runner
 
 jobs:
   # 1. Run every CI check again on the merged code: lint, tests,
@@ -86,3 +90,34 @@ jobs:
           push: true
           tags: ${{ env.IMAGE }}
           cache-from: type=gha
+
+      # Let this runner SSH into the bastion, and nothing else. The bastion
+      # stays closed to the internet between deploys.
+      # A fixed name and priority means a rule left over from a crashed run
+      # is simply overwritten. Only one deploy runs at a time (concurrency).
+      - name: Open the bastion firewall for this runner
+        run: |
+          RUNNER_IP=$(curl -fsS https://api.ipify.org)
+          echo "RULE_OPENED=true" >> "$GITHUB_ENV"
+          az network nsg rule create \
+            --resource-group "$RESOURCE_GROUP" \
+            --nsg-name "$BASTION_NSG" \
+            --name "$RUNNER_RULE" \
+            --priority 110 \
+            --direction Inbound --access Allow --protocol Tcp \
+            --source-address-prefixes "$RUNNER_IP/32" \
+            --destination-port-ranges 22 \
+            --output none
+          echo "SSH open for $RUNNER_IP only"
+
+      # 4. Ansible deploy through the bastion goes here
+
+      # Runs even if the deploy failed or was cancelled, so the rule never stays
+      - name: Close the bastion firewall
+        if: always() && env.RULE_OPENED == 'true'
+        run: |
+          az network nsg rule delete \
+            --resource-group "$RESOURCE_GROUP" \
+            --nsg-name "$BASTION_NSG" \
+            --name "$RUNNER_RULE"
+          echo "SSH rule for the runner removed"
