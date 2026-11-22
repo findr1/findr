@@ -70,11 +70,16 @@ export async function createMongoStore(uri) {
     await client.close();
   }
 
+  // Asks the database to answer. Throws if it can't be reached.
+  async function ping() {
+    await db.command({ ping: 1 });
+  }
+
   if ((await items.countDocuments()) === 0) {
     await reset();
   } else {
     await syncCounter();
   }
 
-  return { name: "mongodb", reset, getAll, getById, add, update, close };
+  return { name: "mongodb", reset, getAll, getById, add, update, close, ping };
 }
