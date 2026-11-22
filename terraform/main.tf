@@ -1,5 +1,10 @@
+data "azurerm_client_config" "current" {}
+
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
+
+  # Registry names must be unique in all of Azure and use only letters and numbers
+  acr_name = lower("${var.project_name}${var.environment}${substr(replace(data.azurerm_client_config.current.subscription_id, "-", ""), 0, 6)}")
 
   tags = {
     project     = var.project_name
@@ -91,6 +96,17 @@ module "loadbalancer" {
   app_port                  = var.app_port
   health_probe_path         = var.health_probe_path
   tags                      = local.tags
+}
+
+# Private container registry. The app VM can pull, CD can push
+module "registry" {
+  source              = "./modules/registry"
+  name                = local.acr_name
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  pull_principal_id   = module.app.principal_id
+  push_principal_id   = var.cd_principal_id
+  tags                = local.tags
 }
 
 # What the CD pipeline may do (only if cd_principal_id is set)

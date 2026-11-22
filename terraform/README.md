@@ -17,10 +17,10 @@ This folder builds everything Findr runs on, in Microsoft Azure. One command bui
         |  private subnet 10.0.2.0/24  | SSH only from the bastion
         v                              v
                   App VM (no public IP)
-                    |
-                    | MongoDB API
-                    v
-          Cosmos DB (only from the private subnet)
+                    |              |
+                    | pull images  | MongoDB API
+                    v              v
+          Container registry    Cosmos DB (only from the private subnet)
 ```
 
 - **A private network** with two subnets
@@ -33,7 +33,8 @@ This folder builds everything Findr runs on, in Microsoft Azure. One command bui
   - Bastion: SSH only from the IPs in `allowed_ssh_cidrs`
   - App: website traffic through the Load Balancer, SSH only from the bastion subnet
   - Everything else is blocked
-- **Roles for the CD pipeline:** read the resource group, edit the bastion firewall during a deploy
+- **A private container registry (ACR)**. The app VM pulls with its own Azure identity. The CD pipeline pushes. No admin password
+- **Roles for the CD pipeline:** push to the registry, read the resource group, edit the bastion firewall during a deploy
 
 The servers start empty. Ansible installs Docker and Findr on them (see [ansible/](../ansible/)). The database (Cosmos DB) only accepts the private subnet, through its service endpoint.
 
@@ -52,7 +53,8 @@ terraform/
     |-- network/               # VNet, public and private subnets
     |-- security/              # Firewalls for both subnets
     |-- compute/               # One VM (used for the bastion and the app)
-    `-- loadbalancer/          # Public Load Balancer, health probe, outbound rule
+    |-- loadbalancer/          # Public Load Balancer, health probe, outbound rule
+    `-- registry/              # Private container registry and its roles
 ```
 
 ## What you need
@@ -177,6 +179,7 @@ Put these in `terraform.tfvars`. You must set the first two. The rest have defau
 | `lb_public_ip` | Public IP of the Load Balancer |
 | `bastion_public_ip` | Public IP of the bastion |
 | `app_private_ip` | Private IP of the app VM |
+| `acr_login_server`, `acr_name` | The private container registry |
 | `ssh_bastion_command`, `ssh_app_command` | Copy them to log in |
 | `private_subnet_id` | For the Cosmos DB network rule |
 | `bastion_nsg_name` | The firewall CD opens for the runner during a deploy |
