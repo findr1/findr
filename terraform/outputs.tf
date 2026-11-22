@@ -70,3 +70,16 @@ output "bastion_vm_id" {
 output "app_vm_id" {
   value = module.app.vm_id
 }
+
+output "cosmos_account_name" {
+  description = "Name of the Cosmos DB account"
+  value       = module.database.name
+}
+
+# Secret. Show it with: terraform output -raw mongodb_uri
+# Save it as the GitHub secret MONGODB_URI. Never put it in git.
+output "mongodb_uri" {
+  description = "Connection string for the app (MONGODB_URI). Secret"
+  value       = module.database.connection_string
+  sensitive   = true
+}

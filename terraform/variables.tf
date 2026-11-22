@@ -102,3 +102,9 @@ variable "cd_principal_id" {
   type        = string
   default     = null
 }
+
+variable "cosmos_free_tier" {
+  description = "Use the Cosmos DB free tier (1000 RU/s and 25 GB free). Only one account per subscription can have it"
+  type        = bool
+  default     = true
+}

@@ -4,6 +4,9 @@ locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
   # Registry names must be unique in all of Azure and use only letters and numbers
+  # Cosmos DB names must also be unique in all of Azure
+  cosmos_name = lower("${local.name_prefix}-cosmos-${substr(replace(data.azurerm_client_config.current.subscription_id, "-", ""), 0, 6)}")
+
   acr_name = lower("${var.project_name}${var.environment}${substr(replace(data.azurerm_client_config.current.subscription_id, "-", ""), 0, 6)}")
 
   tags = {
@@ -125,4 +128,15 @@ resource "azurerm_role_assignment" "cd_bastion_firewall" {
   role_definition_name = "Network Contributor"
   principal_id         = var.cd_principal_id
   principal_type       = "ServicePrincipal"
+}
+
+# Managed MongoDB (Cosmos DB). Only the private subnet can reach it
+module "database" {
+  source              = "./modules/database"
+  name                = local.cosmos_name
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  allowed_subnet_id   = module.network.private_subnet_id
+  free_tier_enabled   = var.cosmos_free_tier
+  tags                = local.tags
 }
