@@ -15,7 +15,7 @@ function normalize(text) {
 
 export async function claimItem(req, res) {
   const item = await store.getById(req.params.id);
-  if (!item) {
+  if (!item || item.hidden) {
     return res.status(404).json({ error: "Item not found" });
   }
   if (item.status !== "found" || !item.question) {
@@ -48,7 +48,7 @@ export async function claimItem(req, res) {
 
 export async function markReturned(req, res) {
   const item = await store.getById(req.params.id);
-  if (!item) {
+  if (!item || item.hidden) {
     return res.status(404).json({ error: "Item not found" });
   }
   if (item.returned) {

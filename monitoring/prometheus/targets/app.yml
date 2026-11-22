@@ -1,0 +1,5 @@
+# Where the Findr app's /metrics is. Local: the "app" container.
+# On Azure, Ansible replaces this with the app VM's private IP.
+- targets: ["app:9464"]
+  labels:
+    env: local

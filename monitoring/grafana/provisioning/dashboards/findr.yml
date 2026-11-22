@@ -1,0 +1,10 @@
+# Loads every dashboard file in /var/lib/grafana/dashboards when Grafana starts.
+# The dashboards live in git, so a rebuilt server gets them back by itself.
+apiVersion: 1
+providers:
+  - name: findr
+    folder: Findr
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

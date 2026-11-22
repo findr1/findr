@@ -17,4 +17,8 @@ export const getAll = () => store.getAll();
 export const getById = (id) => store.getById(id);
 export const add = (item) => store.add(item);
 export const update = (id, changes) => store.update(id, changes);
+export const addReport = (id, report) => store.addReport(id, report);
+export const remove = (id) => store.remove(id);
 export const closeStore = () => store.close();
+export const pingStore = () => store.ping();
+export const storeName = () => store.name;

@@ -1,0 +1,75 @@
+# Runs Findr together with the monitoring tools on a laptop.
+#   cd monitoring
+#   docker compose up -d
+# Then open:
+#   Grafana       http://localhost:3001  (login admin / admin, or GRAFANA_ADMIN_PASSWORD)
+#   Prometheus    http://localhost:9090
+#   Alertmanager  http://localhost:9093
+# On Azure the same files are used, but Ansible (#125) installs them on the
+# monitoring VM, and node_exporter on the app VM.
+
+name: findr-monitoring
+
+# The app and the database, from the main docker-compose.yml
+include:
+  - ../docker-compose.yml
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d   # keep 7 days of numbers
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - findr-net
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    volumes:
+      - ./alertmanager:/etc/alertmanager:ro
+    ports:
+      - "9093:9093"
+    restart: unless-stopped
+    networks:
+      - findr-net
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - findr-net
+
+  # CPU, memory and disk. Locally it measures Docker's own small VM.
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    networks:
+      - findr-net
+
+  # Opens the website like a visitor, for the SiteDown alert
+  blackbox:
+    image: prom/blackbox-exporter:v0.27.0
+    restart: unless-stopped
+    networks:
+      - findr-net
+
+volumes:
+  prometheus-data:
+  grafana-data:

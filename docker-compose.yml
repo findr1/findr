@@ -12,6 +12,8 @@ services:
     image: findr-app
     ports:
       - "${APP_PORT:-3000}:3000"
+      # /metrics for Prometheus. On Azure only the monitoring VM may reach it.
+      - "${METRICS_PORT:-9464}:9464"
     environment:
       PORT: 3000
       NODE_ENV: production
@@ -19,6 +21,8 @@ services:
       MONGODB_URI: mongodb://${MONGO_USER:-findr}:${MONGO_PASSWORD:-findr-local}@db:27017/${MONGO_DB:-findr}?authSource=admin
       # the website is served by the app; 5173 is for npm run dev
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000,http://localhost:5173}
+      # password for the /admin page. Empty = admin switched off
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy

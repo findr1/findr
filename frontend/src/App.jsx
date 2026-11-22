@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from "react-router";
 import Header from "./components/Header";
+import Admin from "./pages/Admin";
 import ItemDetail from "./pages/ItemDetail";
 import ItemsList from "./pages/ItemsList";
 import ReportItem from "./pages/ReportItem";
@@ -30,6 +31,7 @@ const router = createBrowserRouter([
       { path: "/", element: <ItemsList /> },
       { path: "/report", element: <ReportItem /> },
       { path: "/items/:id", element: <ItemDetail /> },
+      { path: "/admin", element: <Admin /> },
       { path: "*", element: <Navigate to="/" replace /> },
     ],
   },
