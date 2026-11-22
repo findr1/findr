@@ -41,6 +41,8 @@ jobs:
     # Only deploy code that passed every check
     needs: [ci, terraform-scan]
     runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.smoke.outputs.url }}
     # id-token: write lets GitHub give Azure a short-lived login token (OIDC)
     permissions:
       contents: read
@@ -128,6 +130,7 @@ jobs:
       # /api/ready must answer, and must be using the database, not the
       # in-memory fallback. Retries for about a minute while the app starts.
       - name: Smoke test the live site
+        id: smoke
         run: |
           LB_IP=$(az network public-ip show --resource-group "$RESOURCE_GROUP" \
             --name "$LB_PUBLIC_IP" --query ipAddress --output tsv)
@@ -138,3 +141,34 @@ jobs:
           echo "$BODY" | jq -e '.storage == "mongodb"' > /dev/null \
             || { echo "::error::The app answers but is not using the database"; exit 1; }
           echo "### Deployed \`${GITHUB_SHA::7}\` to $URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+  # Tell the team in Discord how the deploy went, whatever happened above
+  notify:
+    name: Notify Discord
+    needs: [ci, terraform-scan, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the result to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RESULT: ${{ needs.deploy.result }}
+          APP_URL: ${{ needs.deploy.outputs.url }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "No DISCORD_WEBHOOK_URL secret, skipping"
+            exit 0
+          fi
+          case "$RESULT" in
+            success)   STATUS="✅ Deployed to production: $APP_URL" ;;
+            skipped)   STATUS="❌ Checks failed, nothing was deployed" ;;
+            cancelled) STATUS="⚪ Deploy cancelled" ;;
+            *)         STATUS="❌ Deploy failed" ;;
+          esac
+          # Only the first line of the commit message
+          jq -n --arg s "$STATUS" --arg c "${GITHUB_SHA::7}" --arg m "${COMMIT_MSG%%$'\n'*}" --arg r "$RUN_URL" \
+            '{username: "Findr CD", content: "\($s)\n`\($c)` \($m)\n\($r)"}' \
+            | curl -fsS -H "Content-Type: application/json" -d @- "$WEBHOOK"
