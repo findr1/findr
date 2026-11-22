@@ -30,3 +30,26 @@ jobs:
   terraform-scan:
     name: Terraform scan
     uses: ./.github/workflows/terraform-scan.yml
+
+  deploy:
+    name: Deploy
+    # Only deploy code that passed every check
+    needs: [ci, terraform-scan]
+    runs-on: ubuntu-latest
+    # id-token: write lets GitHub give Azure a short-lived login token (OIDC)
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # 2. Log in to Azure with OIDC. No password is stored anywhere: Azure
+      #    trusts tokens from this repo's main branch (federated credential).
+      #    These three IDs are not secret, but secrets keep them out of the logs.
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Show the Azure account in use
+        run: az account show --query "{subscription:name, tenant:tenantId}" --output table
