@@ -14,17 +14,16 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # The resource group Terraform creates (project-environment-rg)
+  RESOURCE_GROUP: findr-dev-rg
+
 jobs:
   # 1. Run every CI check again on the merged code: lint, tests,
   #    npm audit, the Trivy image scan and the container start check
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
-    # ci.yml's Docker job asks for packages: write. It only pushes on pull
-    # requests, so nothing is pushed from here.
-    permissions:
-      contents: read
-      packages: write
 
   # 1. Scan the Terraform code again with Checkov
   terraform-scan:
@@ -54,3 +53,36 @@ jobs:
 
       - name: Show the Azure account in use
         run: az account show --query "{subscription:name, tenant:tenantId}" --output table
+
+      # 3. Build the image, tag it with the commit SHA and push it to our
+      #    private registry (ACR). Each image can be traced to its commit.
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # Ask Azure for the registry instead of hardcoding its name
+      - name: Find the registry
+        run: |
+          read -r ACR_NAME ACR_SERVER < <(az acr list --resource-group "$RESOURCE_GROUP" \
+            --query "[0].[name, loginServer]" --output tsv) || true
+          if [ -z "$ACR_NAME" ]; then
+            echo "::error::No container registry found in $RESOURCE_GROUP"
+            exit 1
+          fi
+          echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
+          echo "IMAGE=$ACR_SERVER/findr:${{ github.sha }}" >> "$GITHUB_ENV"
+
+      # Uses the Azure login above (AcrPush role), so no registry password
+      - name: Log in to the registry
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Reuses the layers CI already built (GitHub Actions cache)
+      - name: Build and push the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
