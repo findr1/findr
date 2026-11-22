@@ -1,7 +1,10 @@
 variable "name_prefix" { type = string }
 variable "location" { type = string }
 variable "resource_group_name" { type = string }
-variable "subnet_id" { type = string }
-variable "my_ip_cidr" { type = string }
+variable "public_subnet_id" { type = string }
+variable "private_subnet_id" { type = string }
+variable "public_subnet_cidr" { type = string }
+variable "private_subnet_cidr" { type = string }
+variable "allowed_ssh_cidrs" { type = list(string) }
 variable "app_port" { type = number }
 variable "tags" { type = map(string) }

@@ -21,36 +21,54 @@ variable "vnet_address_space" {
   default     = ["10.0.0.0/16"]
 }
 
-variable "subnet_cidr" {
-  description = "Address range of the subnet inside the VNet"
+variable "public_subnet_cidr" {
+  description = "Address range of the public subnet (bastion)"
   type        = string
   default     = "10.0.1.0/24"
 }
 
-variable "my_ip_cidr" {
-  description = "Your public IP with /32 at the end. Only this IP can use SSH"
+variable "private_subnet_cidr" {
+  description = "Address range of the private subnet (app VM, monitoring VM, database access)"
   type        = string
+  default     = "10.0.2.0/24"
+}
+
+variable "allowed_ssh_cidrs" {
+  description = "IPs allowed to SSH to the bastion, each with /32 at the end, e.g. [\"41.186.10.20/32\"]"
+  type        = list(string)
 
   validation {
-    condition     = can(cidrhost(var.my_ip_cidr, 0))
-    error_message = "my_ip_cidr must look like 41.186.10.20/32."
+    condition     = length(var.allowed_ssh_cidrs) > 0 && alltrue([for c in var.allowed_ssh_cidrs : can(cidrhost(c, 0))])
+    error_message = "allowed_ssh_cidrs must be a list like [\"41.186.10.20/32\"]."
   }
 }
 
 variable "app_port" {
-  description = "Port open to everyone so users can reach Findr"
+  description = "Port the app listens on, on the app VM. The Load Balancer forwards port 80 to it"
   type        = number
   default     = 80
 }
 
-variable "vm_size" {
-  description = "Size of the virtual machine"
+variable "health_probe_path" {
+  description = "Path the Load Balancer calls to check the app is up"
+  type        = string
+  default     = "/api/health"
+}
+
+variable "bastion_vm_size" {
+  description = "Size of the bastion VM"
+  type        = string
+  default     = "Standard_B2ats_v2"
+}
+
+variable "app_vm_size" {
+  description = "Size of the app VM"
   type        = string
   default     = "Standard_B2ats_v2"
 }
 
 variable "admin_username" {
-  description = "Linux user created on the VM, used for SSH"
+  description = "Linux user created on every VM, used for SSH"
   type        = string
   default     = "azureuser"
 }
@@ -77,4 +95,10 @@ variable "image_sku" {
   description = "VM image SKU"
   type        = string
   default     = "server"
+}
+
+variable "cd_principal_id" {
+  description = "Object ID of the GitHub Actions service principal (OIDC). Gets read on the resource group and edit on the bastion firewall. Leave empty to skip"
+  type        = string
+  default     = null
 }
