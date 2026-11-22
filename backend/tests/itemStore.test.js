@@ -23,6 +23,10 @@ describe.each(stores)("%s store", (name, createStore) => {
 
   afterAll(() => store.close());
 
+  test("answers a ping when the database is reachable", async () => {
+    await expect(store.ping()).resolves.toBeUndefined();
+  });
+
   test("starts with the sample items", async () => {
     expect(await store.getAll()).toHaveLength(6);
   });
