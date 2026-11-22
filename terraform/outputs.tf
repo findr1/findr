@@ -18,6 +18,15 @@ output "app_private_ip" {
   value       = module.app.private_ip
 }
 
+output "acr_login_server" {
+  description = "Address of the private container registry"
+  value       = module.registry.login_server
+}
+
+output "acr_name" {
+  value = module.registry.name
+}
+
 output "ssh_bastion_command" {
   description = "Copy and run this to log in to the bastion"
   value       = "ssh -i ${trimsuffix(var.ssh_public_key_path, ".pub")} ${var.admin_username}@${module.bastion.public_ip}"

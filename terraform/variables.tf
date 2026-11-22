@@ -98,7 +98,7 @@ variable "image_sku" {
 }
 
 variable "cd_principal_id" {
-  description = "Object ID of the GitHub Actions service principal (OIDC). Gets read on the resource group and edit on the bastion firewall. Leave empty to skip"
+  description = "Object ID of the GitHub Actions service principal (OIDC). Gets push to ACR, read on the resource group and edit on the bastion firewall. Leave empty to skip"
   type        = string
   default     = null
 }
