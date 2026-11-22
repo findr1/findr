@@ -1,0 +1,51 @@
+# Prometheus: what to collect, and how often.
+# The same file is used on a laptop and on Azure. Only the files in
+# targets/ change: they say where each server is. On Azure, Ansible writes
+# them with the real private IPs.
+
+global:
+  scrape_interval: 15s      # read the numbers every 15 seconds
+  evaluation_interval: 15s  # check the alert rules every 15 seconds
+
+rule_files:
+  - alert-rules.yml
+
+alerting:
+  alertmanagers:
+    - file_sd_configs:
+        - files: [targets/alertmanager.yml]
+
+scrape_configs:
+  # Prometheus checks itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # The Findr app: requests, errors, response time, database up (port 9464)
+  - job_name: findr-app
+    file_sd_configs:
+      - files: [targets/app.yml]
+
+  # The app server itself: CPU, memory, disk (node_exporter, port 9100)
+  - job_name: node
+    file_sd_configs:
+      - files: [targets/node.yml]
+
+  # Opens the public URL like a visitor would, through the Load Balancer.
+  # blackbox_exporter does the visit and tells Prometheus if it worked.
+  - job_name: website
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files: [targets/website.yml]
+    relabel_configs:
+      # The URL to visit becomes the "target" parameter...
+      - source_labels: [__address__]
+        target_label: __param_target
+      # ...and is kept as the "instance" label, so graphs show the URL
+      - source_labels: [__param_target]
+        target_label: instance
+      # Prometheus actually talks to blackbox_exporter
+      - target_label: __address__
+        replacement: blackbox:9115
