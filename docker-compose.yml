@@ -12,6 +12,8 @@ services:
     image: findr-app
     ports:
       - "${APP_PORT:-3000}:3000"
+      # /metrics for Prometheus. On Azure only the monitoring VM may reach it.
+      - "${METRICS_PORT:-9464}:9464"
     environment:
       PORT: 3000
       NODE_ENV: production
