@@ -1,6 +1,15 @@
 # Alertmanager: who gets told when an alert fires.
-# For now alerts only show in Alertmanager and Grafana.
-# #126 (Shina) adds the team chat webhook as a receiver here.
+# Every alert goes to the team's Discord channel, and again when it is fixed.
+#
+# The webhook URL is a secret, so it is read from a file that git ignores:
+#   monitoring/alertmanager/secrets/discord-webhook  (one line, the URL only)
+# Locally you create that file yourself. On Azure, Ansible (#125) writes it
+# from the DISCORD_WEBHOOK_URL secret. Without the file Alertmanager still
+# runs, it just logs an error instead of sending.
+#
+# Send a test alert (from the monitoring folder):
+#   docker compose exec alertmanager amtool alert add TestAlert severity=warning \
+#     --annotation=summary="Test alert from Findr" --alertmanager.url=http://localhost:9093
 
 route:
   receiver: team-chat
@@ -11,3 +20,7 @@ route:
 
 receivers:
   - name: team-chat
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/discord-webhook
+        username: Findr Alerts
+        send_resolved: true   # also say when the problem is fixed

@@ -21,6 +21,8 @@ secrets.json
 id_*
 !id_*.pub
 .vault_pass
+# Alertmanager's Discord webhook URL
+monitoring/alertmanager/secrets/
 
 # ========================
 # Build Artifacts
