@@ -1,0 +1,32 @@
+name: Deploy to Production
+
+# Runs only when a pull request is merged into main, never on pull requests
+on:
+  push:
+    branches: [main]
+
+# One deploy at a time. A new merge waits for the running deploy to finish
+# instead of cancelling it halfway.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # 1. Run every CI check again on the merged code: lint, tests,
+  #    npm audit, the Trivy image scan and the container start check
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    # ci.yml's Docker job asks for packages: write. It only pushes on pull
+    # requests, so nothing is pushed from here.
+    permissions:
+      contents: read
+      packages: write
+
+  # 1. Scan the Terraform code again with Checkov
+  terraform-scan:
+    name: Terraform scan
+    uses: ./.github/workflows/terraform-scan.yml
