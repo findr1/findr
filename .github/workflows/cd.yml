@@ -41,8 +41,9 @@ jobs:
       contents: read
       id-token: write
     steps:
-      # 2. Log in to Azure with OIDC. No password is stored anywhere: Azure
-      #    trusts tokens from this repo's main branch (federated credential).
+      # 2. Log in to Azure with OIDC as the findr-github-cd managed identity.
+      #    No password is stored anywhere: Azure trusts tokens from this
+      #    repo's main branch only (federated credential).
       #    These three IDs are not secret, but secrets keep them out of the logs.
       - name: Log in to Azure
         uses: azure/login@v2
