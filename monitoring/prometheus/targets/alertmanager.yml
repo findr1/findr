@@ -1,0 +1,2 @@
+# Where Alertmanager runs. It sends the alerts to the team chat.
+- targets: ["alertmanager:9093"]

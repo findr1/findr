@@ -1,0 +1,4 @@
+# Where node_exporter runs. Local: the "node-exporter" container.
+- targets: ["node-exporter:9100"]
+  labels:
+    env: local
