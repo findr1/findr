@@ -1,5 +1,6 @@
 import express from "express";
 import itemsRouter from "./items.js";
+import adminRouter from "./admin.js";
 import { readyHandler } from "./ready.js";
 
 // All API routes in one place. app.js only imports this file.
@@ -15,5 +16,6 @@ router.get("/health", (req, res) => {
 router.get("/ready", readyHandler());
 
 router.use("/items", itemsRouter);
+router.use("/admin", adminRouter);
 
 export default router;

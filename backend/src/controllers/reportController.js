@@ -68,7 +68,7 @@ export async function createItem(req, res) {
 
 export async function getItem(req, res) {
   const item = await store.getById(req.params.id);
-  if (!item) {
+  if (!item || item.hidden) {
     return res.status(404).json({ error: "Item not found" });
   }
   res.json(publicItem(item));

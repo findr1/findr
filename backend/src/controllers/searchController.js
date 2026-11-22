@@ -39,6 +39,8 @@ export async function listItems(req, res) {
   }
 
   const results = (await store.getAll()).filter((item) => {
+    // Listings hidden after reports are not shown until an admin checks them
+    if (item.hidden) return false;
     if (status && item.status !== status) return false;
     if (category && String(item.category).toLowerCase() !== category) return false;
     if (location && !String(item.location).toLowerCase().includes(location)) return false;

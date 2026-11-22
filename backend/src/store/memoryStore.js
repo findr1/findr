@@ -32,6 +32,26 @@ export function createMemoryStore() {
     return item;
   }
 
+  // Saves a report on an item. One report per reporter: a second report
+  // from the same reporterId is not added.
+  // Returns undefined if the item doesn't exist, otherwise { item, added }.
+  async function addReport(id, report) {
+    const item = await getById(id);
+    if (!item) return undefined;
+    item.reports ??= [];
+    if (item.reports.some((r) => r.reporterId === report.reporterId)) return { item, added: false };
+    item.reports.push(report);
+    return { item, added: true };
+  }
+
+  // Deletes an item for good. Returns true if it existed.
+  async function remove(id) {
+    const index = items.findIndex((item) => item.id === Number(id));
+    if (index === -1) return false;
+    items.splice(index, 1);
+    return true;
+  }
+
   async function close() {}
 
   // Memory is always there, so the memory store is always ready
@@ -39,5 +59,5 @@ export function createMemoryStore() {
 
   reset();
 
-  return { name: "memory", reset, getAll, getById, add, update, close, ping };
+  return { name: "memory", reset, getAll, getById, add, update, addReport, remove, close, ping };
 }

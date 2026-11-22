@@ -63,6 +63,32 @@ describe.each(stores)("%s store", (name, createStore) => {
     expect((await store.getById(1))._id).toBeUndefined();
     expect((await store.getAll()).every((item) => item._id === undefined)).toBe(true);
   });
+
+  test("saves a report on an item", async () => {
+    const result = await store.addReport(1, { reporterId: "a", reason: "spam" });
+    expect(result.added).toBe(true);
+    expect(result.item.reports).toEqual([{ reporterId: "a", reason: "spam" }]);
+    expect((await store.getById(1)).reports).toHaveLength(1);
+  });
+
+  test("keeps only one report per reporter", async () => {
+    await store.addReport(1, { reporterId: "a", reason: "spam" });
+    const again = await store.addReport(1, { reporterId: "a", reason: "fake" });
+    expect(again.added).toBe(false);
+    await store.addReport(1, { reporterId: "b", reason: "fake" });
+    expect((await store.getById(1)).reports.map((r) => r.reporterId)).toEqual(["a", "b"]);
+  });
+
+  test("reporting a missing item returns undefined", async () => {
+    expect(await store.addReport(999, { reporterId: "a", reason: "spam" })).toBeUndefined();
+  });
+
+  test("deletes an item", async () => {
+    expect(await store.remove(1)).toBe(true);
+    expect(await store.getById(1)).toBeUndefined();
+    expect(await store.getAll()).toHaveLength(5);
+    expect(await store.remove(1)).toBe(false);
+  });
 });
 
 describe("publicItem", () => {
