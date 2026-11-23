@@ -136,8 +136,16 @@ jobs:
             exit 1
           fi
           KEY_FILE="$RUNNER_TEMP/findr_key"
-          printf '%s\n' "$SSH_PRIVATE_KEY" > "$KEY_FILE"
+          # Remove Windows line endings (\r), which stop SSH from reading the key
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$KEY_FILE"
           chmod 600 "$KEY_FILE"
+          # Show which key this is (public part only, safe to print).
+          # It must end with "findr-team", the key the VMs were built with.
+          if ! PUBLIC_KEY=$(ssh-keygen -y -P "" -f "$KEY_FILE" 2>/dev/null); then
+            echo "::error::SSH_PRIVATE_KEY is not a valid private key, or it has a passphrase"
+            exit 1
+          fi
+          echo "Key in SSH_PRIVATE_KEY: $(echo "$PUBLIC_KEY" | ssh-keygen -l -f -)"
           echo "SSH_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
 
       # Let this runner SSH into the bastion, and nothing else. The bastion
