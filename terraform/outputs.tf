@@ -83,3 +83,17 @@ output "mongodb_uri" {
   value       = module.database.connection_string
   sensitive   = true
 }
+
+output "monitoring_private_ip" {
+  description = "Private IP of the monitoring VM (Prometheus, Grafana, Alertmanager)"
+  value       = module.monitoring.private_ip
+}
+
+output "grafana_tunnel_command" {
+  description = "Run this, keep it open, then open http://localhost:3000 for Grafana"
+  value       = "ssh -i ${trimsuffix(var.ssh_public_key_path, ".pub")} -N -L 3000:${module.monitoring.private_ip}:3000 ${var.admin_username}@${module.bastion.public_ip}"
+}
+
+output "monitoring_vm_id" {
+  value = module.monitoring.vm_id
+}

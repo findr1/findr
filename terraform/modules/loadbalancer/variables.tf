@@ -6,3 +6,5 @@ variable "app_ip_configuration_name" { type = string }
 variable "app_port" { type = number }
 variable "health_probe_path" { type = string }
 variable "tags" { type = map(string) }
+variable "monitoring_nic_id" { type = string }
+variable "monitoring_ip_configuration_name" { type = string }

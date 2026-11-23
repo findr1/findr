@@ -88,17 +88,39 @@ module "app" {
   depends_on = [module.security]
 }
 
+# Monitoring server: Prometheus, Grafana and Alertmanager. No public IP,
+# Grafana opens through the bastion
+module "monitoring" {
+  source              = "./modules/compute"
+  name                = "${local.name_prefix}-monitoring"
+  location            = azurerm_resource_group.main.location
+  resource_group_name = azurerm_resource_group.main.name
+  subnet_id           = module.network.private_subnet_id
+  public_ip_enabled   = false
+  vm_size             = var.monitoring_vm_size
+  admin_username      = var.admin_username
+  ssh_public_key      = file(pathexpand(var.ssh_public_key_path))
+  image_publisher     = var.image_publisher
+  image_offer         = var.image_offer
+  image_sku           = var.image_sku
+  tags                = merge(local.tags, { role = "monitoring" })
+
+  depends_on = [module.security]
+}
+
 # One public address for Findr. Also gives the private VM a way out to the internet
 module "loadbalancer" {
-  source                    = "./modules/loadbalancer"
-  name_prefix               = local.name_prefix
-  location                  = azurerm_resource_group.main.location
-  resource_group_name       = azurerm_resource_group.main.name
-  app_nic_id                = module.app.nic_id
-  app_ip_configuration_name = module.app.ip_configuration_name
-  app_port                  = var.app_port
-  health_probe_path         = var.health_probe_path
-  tags                      = local.tags
+  source                           = "./modules/loadbalancer"
+  name_prefix                      = local.name_prefix
+  location                         = azurerm_resource_group.main.location
+  resource_group_name              = azurerm_resource_group.main.name
+  app_nic_id                       = module.app.nic_id
+  app_ip_configuration_name        = module.app.ip_configuration_name
+  app_port                         = var.app_port
+  health_probe_path                = var.health_probe_path
+  monitoring_nic_id                = module.monitoring.nic_id
+  monitoring_ip_configuration_name = module.monitoring.ip_configuration_name
+  tags                             = local.tags
 }
 
 # Private container registry. The app VM can pull, CD can push
@@ -110,6 +132,37 @@ module "registry" {
   pull_principal_id   = module.app.principal_id
   push_principal_id   = var.cd_principal_id
   tags                = local.tags
+}
+
+# Only the monitoring VM may read the app VM's metrics:
+# node_exporter (9100) and the app's private /metrics port (9464)
+resource "azurerm_network_security_rule" "metrics_from_monitoring" {
+  name                        = "allow-metrics-from-monitoring"
+  priority                    = 130
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_ranges     = ["9100", "9464"]
+  source_address_prefix       = module.monitoring.private_ip
+  destination_address_prefix  = module.app.private_ip
+  resource_group_name         = azurerm_resource_group.main.name
+  network_security_group_name = module.security.private_nsg_name
+}
+
+# Grafana only from the bastion subnet (open it with an SSH tunnel through the bastion)
+resource "azurerm_network_security_rule" "grafana_from_bastion" {
+  name                        = "allow-grafana-from-bastion"
+  priority                    = 140
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "3000"
+  source_address_prefix       = var.public_subnet_cidr
+  destination_address_prefix  = module.monitoring.private_ip
+  resource_group_name         = azurerm_resource_group.main.name
+  network_security_group_name = module.security.private_nsg_name
 }
 
 # What the CD pipeline may do (only if cd_principal_id is set)

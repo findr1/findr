@@ -108,3 +108,9 @@ variable "cosmos_free_tier" {
   type        = bool
   default     = true
 }
+
+variable "monitoring_vm_size" {
+  description = "Size of the monitoring VM"
+  type        = string
+  default     = "Standard_B2ats_v2"
+}

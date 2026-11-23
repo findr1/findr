@@ -28,10 +28,13 @@ This folder builds everything Findr runs on, in Microsoft Azure. One command bui
   - **Private subnet:** the app VM. Nothing here has a public IP
 - **A bastion VM**, the only server you can SSH to. You reach the app VM through it
 - **The app VM**, where Ansible installs Docker and runs Findr
+- **A monitoring VM** (private subnet, no public IP) for Prometheus, Grafana and Alertmanager. Only it can read the app VM's metrics. Grafana opens through the bastion
 - **A Load Balancer**, the one public address for Findr. It sends port 80 to the app VM when its health check (`/api/health`) answers, and lets the private VM reach the internet
 - **Firewalls (NSGs)**
   - Bastion: SSH only from the IPs in `allowed_ssh_cidrs`
   - App: website traffic through the Load Balancer, SSH only from the bastion subnet
+  - Metrics: only the monitoring VM can reach the app VM on 9100 (node_exporter) and 9464 (app /metrics)
+  - Grafana (3000): only from the bastion subnet
   - Everything else is blocked
 - **A private container registry (ACR)**. The app VM pulls with its own Azure identity. The CD pipeline pushes. No admin password
 - **Roles for the CD pipeline:** push to the registry, read the resource group, edit the bastion firewall during a deploy
@@ -147,6 +150,7 @@ All SSH goes through the bastion.
 ```bash
 terraform output -raw ssh_bastion_command   # log in to the bastion
 terraform output -raw ssh_app_command       # log in to the app VM, through the bastion
+terraform output -raw grafana_tunnel_command  # run it, keep it open, then open http://localhost:3000
 ```
 
 ## Settings
@@ -166,6 +170,7 @@ Put these in `terraform.tfvars`. You must set the first two. The rest have defau
 | `health_probe_path` | Page the Load Balancer checks | `/api/health` |
 | `bastion_vm_size` | Bastion size | `Standard_B2ats_v2` |
 | `app_vm_size` | App VM size | `Standard_B2ats_v2` |
+| `monitoring_vm_size` | Monitoring VM size | `Standard_B2ats_v2` |
 | `admin_username` | Login name on the servers | `azureuser` |
 | `ssh_public_key_path` | Your public SSH key | `~/.ssh/findr.pub` |
 | `image_publisher`, `image_offer`, `image_sku` | Server image | Ubuntu 24.04 LTS |
@@ -179,6 +184,8 @@ Put these in `terraform.tfvars`. You must set the first two. The rest have defau
 | `lb_public_ip` | Public IP of the Load Balancer |
 | `bastion_public_ip` | Public IP of the bastion |
 | `app_private_ip` | Private IP of the app VM |
+| `monitoring_private_ip` | Private IP of the monitoring VM |
+| `grafana_tunnel_command` | Opens Grafana through the bastion |
 | `acr_login_server`, `acr_name` | The private container registry |
 | `ssh_bastion_command`, `ssh_app_command` | Copy them to log in |
 | `private_subnet_id` | For the Cosmos DB network rule |
