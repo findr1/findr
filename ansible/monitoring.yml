@@ -1,0 +1,22 @@
+# Install monitoring. Run: ansible-playbook monitoring.yml
+# Needs BASTION_IP, APP_PRIVATE_IP and MONITORING_PRIVATE_IP.
+- name: node_exporter on the app VM
+  hosts: app_server
+  become: true
+  tasks:
+    - name: Install node_exporter
+      ansible.builtin.include_role:
+        name: monitoring
+        tasks_from: node_exporter
+
+- name: Monitoring stack on the monitoring VM
+  hosts: monitoring
+  become: true
+  roles:
+    - swap
+    - docker
+  tasks:
+    - name: Install Prometheus, Grafana, Alertmanager and blackbox_exporter
+      ansible.builtin.include_role:
+        name: monitoring
+        tasks_from: stack

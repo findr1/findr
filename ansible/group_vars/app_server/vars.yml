@@ -18,3 +18,6 @@ app_dir: /opt/findr
 mongodb_uri: "{{ lookup('env', 'MONGODB_URI') }}"
 cors_origin: "{{ lookup('env', 'APP_URL') }}"
 admin_token: "{{ lookup('env', 'ADMIN_TOKEN') }}"
+
+# Only the monitoring VM may read node_exporter (port 9100)
+monitoring_source: "{{ lookup('env', 'MONITORING_PRIVATE_IP') | default('10.0.0.0/8', true) }}"

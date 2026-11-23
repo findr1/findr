@@ -1,0 +1,11 @@
+- name: Copy the monitoring config (Prometheus, Grafana, Alertmanager, blackbox)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../monitoring/"
+    dest: "{{ monitoring_dir }}/"
+    mode: preserve
+
+- name: Start the monitoring stack (docker compose up -d)
+  community.docker.docker_compose_v2:
+    project_src: "{{ monitoring_dir }}"
+    pull: missing
+    state: present

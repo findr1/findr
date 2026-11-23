@@ -245,3 +245,15 @@ Environment variables it needs:
     ansible-playbook deploy.yml
 
 `playbook.yml` and `inventory/` are the Formative 3 setup (one VM with a public IP), kept for history.
+
+## Monitoring (#125)
+
+`monitoring.yml` installs node_exporter on the app VM (port 9100, open only to the monitoring VM)
+and copies `monitoring/` to the monitoring VM, then starts Prometheus, Grafana, Alertmanager and
+blackbox_exporter with `docker compose up -d`. Also needs `MONITORING_PRIVATE_IP`.
+
+    ansible-playbook monitoring.yml
+
+Open Grafana through the bastion, then browse to http://localhost:3000:
+
+    ssh -i ~/.ssh/findr -L 3000:$MONITORING_PRIVATE_IP:3000 azureuser@$BASTION_IP
