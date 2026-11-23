@@ -14,19 +14,218 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # The resource group Terraform creates (project-environment-rg)
+  RESOURCE_GROUP: findr-dev-rg
+  # Firewall in front of the bastion, and the temporary rule CD adds to it.
+  # Priorities 110-199 are kept free for this rule in the Terraform code.
+  BASTION_NSG: findr-dev-bastion-nsg
+  RUNNER_RULE: allow-ssh-from-cd-runner
+  # Where to find the servers' addresses (names come from the Terraform code)
+  LB_PUBLIC_IP: findr-dev-lb-pip            # the app's public address
+  BASTION_PUBLIC_IP: findr-dev-bastion-pip
+  APP_NIC: findr-dev-app-nic                # the app VM's private network card
+
 jobs:
   # 1. Run every CI check again on the merged code: lint, tests,
   #    npm audit, the Trivy image scan and the container start check
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
-    # ci.yml's Docker job asks for packages: write. It only pushes on pull
-    # requests, so nothing is pushed from here.
-    permissions:
-      contents: read
-      packages: write
 
   # 1. Scan the Terraform code again with Checkov
   terraform-scan:
     name: Terraform scan
     uses: ./.github/workflows/terraform-scan.yml
+
+  deploy:
+    name: Deploy
+    # Only deploy code that passed every check
+    needs: [ci, terraform-scan]
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.smoke.outputs.url }}
+    # id-token: write lets GitHub give Azure a short-lived login token (OIDC)
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # 2. Log in to Azure with OIDC as the findr-github-cd managed identity.
+      #    No password is stored anywhere: Azure trusts tokens from this
+      #    repo's main branch only (federated credential).
+      #    These three IDs are not secret, but secrets keep them out of the logs.
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Show the Azure account in use
+        run: az account show --query "{subscription:name, tenant:tenantId}" --output table
+
+      # 3. Build the image, tag it with the commit SHA and push it to our
+      #    private registry (ACR). Each image can be traced to its commit.
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # Ask Azure for the registry instead of hardcoding its name
+      - name: Find the registry
+        run: |
+          read -r ACR_NAME ACR_SERVER < <(az acr list --resource-group "$RESOURCE_GROUP" \
+            --query "[0].[name, loginServer]" --output tsv) || true
+          if [ -z "$ACR_NAME" ]; then
+            echo "::error::No container registry found in $RESOURCE_GROUP"
+            exit 1
+          fi
+          echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
+          echo "ACR_LOGIN_SERVER=$ACR_SERVER" >> "$GITHUB_ENV"
+          echo "IMAGE=$ACR_SERVER/findr:${{ github.sha }}" >> "$GITHUB_ENV"
+
+      # Uses the Azure login above (AcrPush role), so no registry password
+      - name: Log in to the registry
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Reuses the layers CI already built (GitHub Actions cache)
+      - name: Build and push the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+
+      # 4. Deploy with Ansible (ansible/deploy.yml) through the bastion.
+      #    Everything is prepared first, so the firewall is open as briefly
+      #    as possible. The playbook reads its settings from env vars.
+      - name: Look up the server addresses
+        run: |
+          ip() { az network public-ip show --resource-group "$RESOURCE_GROUP" \
+            --name "$1" --query ipAddress --output tsv; }
+          BASTION_IP=$(ip "$BASTION_PUBLIC_IP")
+          APP_URL="http://$(ip "$LB_PUBLIC_IP")"
+          APP_PRIVATE_IP=$(az network nic show --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_NIC" --query "ipConfigurations[0].privateIPAddress" --output tsv)
+          echo "Bastion $BASTION_IP, app VM $APP_PRIVATE_IP, site $APP_URL"
+          {
+            echo "BASTION_IP=$BASTION_IP"
+            echo "APP_PRIVATE_IP=$APP_PRIVATE_IP"
+            echo "APP_URL=$APP_URL"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible
+        run: |
+          pip install "ansible-core==2.18.*"
+          ansible-galaxy collection install -r ansible/requirements.yml
+
+      # Written to the runner's temp folder, which is wiped after the job
+      - name: Load the SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "::error::The SSH_PRIVATE_KEY secret is missing"
+            exit 1
+          fi
+          KEY_FILE="$RUNNER_TEMP/findr_key"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          echo "SSH_KEY_FILE=$KEY_FILE" >> "$GITHUB_ENV"
+
+      # Let this runner SSH into the bastion, and nothing else. The bastion
+      # stays closed to the internet between deploys.
+      # A fixed name and priority means a rule left over from a crashed run
+      # is simply overwritten. Only one deploy runs at a time (concurrency).
+      - name: Open the bastion firewall for this runner
+        run: |
+          RUNNER_IP=$(curl -fsS https://api.ipify.org)
+          echo "RULE_OPENED=true" >> "$GITHUB_ENV"
+          az network nsg rule create \
+            --resource-group "$RESOURCE_GROUP" \
+            --nsg-name "$BASTION_NSG" \
+            --name "$RUNNER_RULE" \
+            --priority 110 \
+            --direction Inbound --access Allow --protocol Tcp \
+            --source-address-prefixes "$RUNNER_IP/32" \
+            --destination-port-ranges 22 \
+            --output none
+          echo "SSH open for $RUNNER_IP only"
+
+      # Logs in to ACR on the VM, pulls the new image and runs
+      # docker compose up -d. The VM gets a short-lived ACR token from this
+      # runner (AcrPush also allows pulls), so no registry password is stored.
+      - name: Deploy with Ansible through the bastion
+        working-directory: ansible
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          ANSIBLE_FORCE_COLOR: "1"
+        run: |
+          ACR_TOKEN=$(az acr login --name "$ACR_NAME" --expose-token \
+            --query accessToken --output tsv)
+          echo "::add-mask::$ACR_TOKEN"
+          export ACR_TOKEN
+          ansible-playbook deploy.yml
+
+      # Runs even if the deploy failed or was cancelled, so the rule never stays
+      - name: Close the bastion firewall
+        if: always() && env.RULE_OPENED == 'true'
+        run: |
+          az network nsg rule delete \
+            --resource-group "$RESOURCE_GROUP" \
+            --nsg-name "$BASTION_NSG" \
+            --name "$RUNNER_RULE"
+          echo "SSH rule for the runner removed"
+
+      # Check the live site through the Load Balancer, like a real user.
+      # /api/ready must answer, and must be using the database, not the
+      # in-memory fallback. Retries for about a minute while the app starts.
+      - name: Smoke test the live site
+        id: smoke
+        run: |
+          BODY=$(curl -fsS --retry 12 --retry-delay 5 --retry-all-errors --max-time 10 "$APP_URL/api/ready") \
+            || { echo "::error::$APP_URL/api/ready did not answer"; exit 1; }
+          echo "$BODY"
+          echo "$BODY" | jq -e '.storage == "mongodb"' > /dev/null \
+            || { echo "::error::The app answers but is not using the database"; exit 1; }
+          echo "### Deployed \`${GITHUB_SHA::7}\` to $APP_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "url=$APP_URL" >> "$GITHUB_OUTPUT"
+
+  # Tell the team in Discord how the deploy went, whatever happened above
+  notify:
+    name: Notify Discord
+    needs: [ci, terraform-scan, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the result to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RESULT: ${{ needs.deploy.result }}
+          APP_URL: ${{ needs.deploy.outputs.url }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "No DISCORD_WEBHOOK_URL secret, skipping"
+            exit 0
+          fi
+          case "$RESULT" in
+            success)   STATUS="✅ Deployed to production: $APP_URL" ;;
+            skipped)   STATUS="❌ Checks failed, nothing was deployed" ;;
+            cancelled) STATUS="⚪ Deploy cancelled" ;;
+            *)         STATUS="❌ Deploy failed" ;;
+          esac
+          # Only the first line of the commit message
+          jq -n --arg s "$STATUS" --arg c "${GITHUB_SHA::7}" --arg m "${COMMIT_MSG%%$'\n'*}" --arg r "$RUN_URL" \
+            '{username: "Findr CD", content: "\($s)\n`\($c)` \($m)\n\($r)"}' \
+            | curl -fsS -H "Content-Type: application/json" -d @- "$WEBHOOK"
