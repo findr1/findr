@@ -159,6 +159,27 @@ jobs:
             --output none
           echo "SSH open for $RUNNER_IP only"
 
+      # A new firewall rule can take a few seconds to start working. Wait
+      # until the bastion answers SSH, so Ansible doesn't fail with
+      # "unreachable". A wrong key is reported here with a clear message.
+      - name: Wait until the bastion answers SSH
+        run: |
+          for i in $(seq 1 12); do
+            if ssh -i "$SSH_KEY_FILE" -o BatchMode=yes -o ConnectTimeout=5                 -o StrictHostKeyChecking=accept-new "azureuser@$BASTION_IP" true 2> ssh-error.txt; then
+              echo "Bastion answers SSH"
+              exit 0
+            fi
+            if grep -q "Permission denied" ssh-error.txt; then
+              echo "::error::The bastion refused the SSH key. SSH_PRIVATE_KEY must be the team key (findr-team), with no passphrase."
+              exit 1
+            fi
+            echo "Not reachable yet ($i/12), trying again in 5 seconds"
+            sleep 5
+          done
+          cat ssh-error.txt
+          echo "::error::Could not reach the bastion on port 22 after 1 minute"
+          exit 1
+
       # Logs in to ACR on the VM, pulls the new image and runs
       # docker compose up -d. The VM gets a short-lived ACR token from this
       # runner (AcrPush also allows pulls), so no registry password is stored.
