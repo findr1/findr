@@ -1,0 +1,28 @@
+# Deploy Findr to the private app VM through the bastion.
+# Run: ansible-playbook deploy.yml  (env vars listed in ansible/README.md)
+- name: Deploy Findr
+  hosts: app_server
+  become: true
+
+  pre_tasks:
+    - name: Stop early if a required setting is missing
+      ansible.builtin.assert:
+        that:
+          - acr_login_server | length > 0
+          - acr_token | length > 0
+          - mongodb_uri | length > 0
+        fail_msg: "Set ACR_LOGIN_SERVER, ACR_TOKEN and MONGODB_URI first"
+        quiet: true
+
+    - name: Install git and curl
+      ansible.builtin.apt:
+        name: [git, curl]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+  roles:
+    - swap
+    - docker        # Docker + Docker Compose plugin
+    - hardening     # firewall, key-only SSH, fail2ban
+    - app_deploy
