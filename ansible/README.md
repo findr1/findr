@@ -225,3 +225,23 @@ We ran the playbook on the Azure VM that Terraform created (`4.221.171.155`, Ubu
 ## Removing the app
 
 Ansible doesn't delete anything. When testing is done, Bonae deletes the whole server with `terraform destroy` (see [`terraform/README.md`](../terraform/README.md)).
+
+## Deploying to Azure (bastion setup)
+
+The app VM has no public IP, so Ansible jumps through the bastion (`group_vars/app_server/vars.yml`).
+`deploy.yml` installs Docker, Docker Compose, git and curl, hardens the VM, logs in to ACR,
+pulls the image for the given tag and runs `docker compose up -d` in `/opt/findr`. Safe to run twice.
+
+Environment variables it needs:
+`BASTION_IP`, `APP_PRIVATE_IP`, `APP_URL`, `ACR_LOGIN_SERVER` (from `terraform output`),
+`MONGODB_URI` (`terraform output -raw mongodb_uri`, secret),
+`ACR_TOKEN` (`az acr login -n <acr_name> --expose-token --query accessToken -o tsv`),
+`IMAGE_TAG` (the commit SHA in CD), and optionally `SSH_KEY_FILE` (default `~/.ssh/findr`).
+
+    cd ansible
+    export ANSIBLE_CONFIG=$PWD/ansible.cfg   # needed on WSL /mnt/c
+    ansible-galaxy collection install -r requirements.yml
+    ansible app_server -m ping
+    ansible-playbook deploy.yml
+
+`playbook.yml` and `inventory/` are the Formative 3 setup (one VM with a public IP), kept for history.
