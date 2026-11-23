@@ -1,0 +1,17 @@
+- name: Run node_exporter (CPU, memory and disk of the app VM)
+  community.docker.docker_container:
+    name: node-exporter
+    image: prom/node-exporter:v1.8.2
+    restart_policy: unless-stopped
+    network_mode: host
+    pid_mode: host
+    command: --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+
+- name: Let only the monitoring VM read node_exporter
+  community.general.ufw:
+    rule: allow
+    port: "9100"
+    proto: tcp
+    from_ip: "{{ monitoring_source }}"

@@ -1,0 +1,23 @@
+ansible_user: azureuser
+ansible_ssh_private_key_file: "{{ lookup('env', 'SSH_KEY_FILE') | default('~/.ssh/findr', true) }}"
+ansible_host: "{{ lookup('env', 'APP_PRIVATE_IP') }}"
+
+# Jump through the bastion (same as ProxyJump, but passes the key and
+# host-key setting to the bastion hop too, so CD never hangs on a prompt)
+ansible_ssh_common_args: >-
+  -o ProxyCommand="ssh -i {{ ansible_ssh_private_key_file }}
+  -o StrictHostKeyChecking=accept-new
+  -W %h:%p {{ ansible_user }}@{{ lookup('env', 'BASTION_IP') }}"
+
+acr_login_server: "{{ lookup('env', 'ACR_LOGIN_SERVER') }}"
+acr_token: "{{ lookup('env', 'ACR_TOKEN') }}"
+findr_image_name: "{{ lookup('env', 'IMAGE_NAME') | default('findr', true) }}"
+findr_image_tag: "{{ lookup('env', 'IMAGE_TAG') | default('latest', true) }}"
+
+app_dir: /opt/findr
+mongodb_uri: "{{ lookup('env', 'MONGODB_URI') }}"
+cors_origin: "{{ lookup('env', 'APP_URL') }}"
+admin_token: "{{ lookup('env', 'ADMIN_TOKEN') }}"
+
+# Only the monitoring VM may read node_exporter (port 9100)
+monitoring_source: "{{ lookup('env', 'MONITORING_PRIVATE_IP') | default('10.0.0.0/8', true) }}"
