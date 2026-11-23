@@ -73,8 +73,8 @@ jobs:
       - name: Find the registry
         run: |
           read -r ACR_NAME ACR_SERVER < <(az acr list --resource-group "$RESOURCE_GROUP" \
-            --query "[0].[name, loginServer]" --output tsv) || true
-          if [ -z "$ACR_NAME" ]; then
+            --query "[0].{name: name, server: loginServer}" --output tsv) || true
+          if [ -z "$ACR_NAME" ] || [ -z "$ACR_SERVER" ]; then
             echo "::error::No container registry found in $RESOURCE_GROUP"
             exit 1
           fi
