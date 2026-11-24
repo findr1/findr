@@ -8,13 +8,6 @@
 
 **Live app:** http://102.37.96.165 · **Demo video:** _coming soon_
 
-<!--
-  README OPERATIONS MANUAL (#128). Shina leads, everyone writes their own part.
-  Find your name in a TODO comment like this one, write that section, then
-  delete the comment. Keep it short and simple: link to the detailed READMEs
-  (terraform/, ansible/, SECURITY.md) instead of repeating them.
--->
-
 ## Table of Contents
 
 1. [About Findr](#about-findr)
@@ -46,72 +39,49 @@ Findr gives the campus one place to post and search lost and found items. It is 
 
 ## Team Members
 
-| Name                 | Role                               | Built                                                                                                |
-| -------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Gloire Gwiza         | Infrastructure (Terraform)         | Shared state, network, bastion, app VM, Load Balancer, firewalls, ACR                                |
-| Bonae Ineza Gisubizo | Database, app and Azure setup      | Cosmos DB, `/api/ready`, GitHub-to-Azure login (OIDC), budget alert, metrics, Prometheus and Grafana |
-| Norette Atete        | Configuration management (Ansible) | Deploy playbook through the bastion, Docker Compose deploy, monitoring role, architecture diagram    |
-| Shina Atete Mpeta    | CI/CD and documentation            | CD pipeline, bastion firewall during deploys, smoke test, Discord alerts, this README                |
+- Gloire Gwiza
+- Bonae Ineza Gisubizo
+- Norette Atete
+- Shina Atete Mpeta
 
 ## Live Application
 
 [**Open Findr**](http://102.37.96.165)
 
-<!-- TODO(Shina): after the first green deploy, add a screenshot of the live app
-     and the /api/ready response, e.g. docs/images/live-app.png -->
+![Findr running live at 102.37.96.165](docs/images/live-app.png)
 
 ## Architecture Overview
 
 ### Architecture Diagram
 
-<!-- TODO(Norette, #127): replace the Mermaid diagram below with the draw.io image:
-     ![Findr architecture](docs/images/architecture.png) -->
-
-```mermaid
-flowchart LR
-  user([Users]) -->|HTTP 80| lb[Load Balancer<br/>public IP]
-  dev([Team / CD runner]) -->|SSH 22, allowed IPs only| bastion
-
-  subgraph vnet[Azure VNet]
-    subgraph pub[Public subnet]
-      bastion[Bastion VM]
-    end
-    subgraph priv[Private subnet - no public IPs]
-      app[App VM<br/>Docker Compose: Findr :80]
-      mon[Monitoring VM<br/>Prometheus, Grafana, Alertmanager]
-    end
-  end
-
-  lb -->|port 80, health probe| app
-  bastion -->|SSH only from bastion| app
-  bastion -->|SSH, Grafana tunnel| mon
-  mon -->|scrape metrics| app
-  app -->|private subnet only| cosmos[(Cosmos DB<br/>MongoDB API)]
-  app -->|pull image| acr[(ACR<br/>private registry)]
-  mon -->|alerts| discord([Discord])
-
-  subgraph gh[GitHub Actions]
-    ci[CI: lint, tests,<br/>Trivy, Checkov] --> cd[CD on merge to main]
-  end
-  cd -->|push image :sha| acr
-  cd -->|OIDC login| azure([Azure])
-  cd -->|Ansible via bastion| bastion
-```
+![Findr architecture](docs/images/architecture.png)
 
 ### Component Description
 
-<!-- TODO(Gloire): one or two lines per component (VNet and subnets, bastion,
-     app VM, Load Balancer, NSGs, ACR, shared state) and how they connect.
-     Details live in terraform/README.md, so link there. -->
+Everything is built by Terraform in one resource group, `findr-dev-rg`, in South Africa North. Full details are in [terraform/README.md](terraform/README.md).
 
-<!-- TODO(Bonae): Cosmos DB (MongoDB API, free tier, private subnet only) and
-     the monitoring VM. -->
+- **VNet (`10.0.0.0/16`)** with two subnets
+  - **Public subnet (`10.0.1.0/24`):** only the bastion
+  - **Private subnet (`10.0.2.0/24`):** the app VM and the monitoring VM. Nothing here has a public IP
+- **Bastion VM:** the only server you can SSH to from the internet. The team and the CD pipeline reach the private VMs through it
+- **App VM:** runs Findr with Docker Compose on port 80. Pulls its image from ACR with its own Azure identity, so no registry password
+- **Load Balancer:** Findr's one public address. Sends port 80 to the app VM while `/api/health` answers, and gives the private VMs a way out to the internet
+- **Firewalls (NSGs):** one for each subnet, see [Security Controls at a Glance](#security-controls-at-a-glance)
+- **Container registry (ACR):** private, with the admin user turned off. CD pushes each image tagged with its commit SHA, and the app VM pulls it
+- **Cosmos DB:** managed MongoDB (API 4.2) on the free tier (1000 RU/s and 25 GB free). Holds the `items` and `counters` collections. Only the private subnet can connect, through a VNet service endpoint. Azure backs it up every 4 hours, so the data survives app VM rebuilds
+- **Monitoring VM:** runs Prometheus, Grafana, Alertmanager and blackbox_exporter. It is the only machine allowed to read the app VM's metrics. Grafana opens through the bastion
+- **Shared state:** Terraform's state lives in Azure Storage (`findrtfstateafff2a46`), not on a laptop. You get in with `az login`, there are no storage keys, and the state locks while someone runs `plan` or `apply`
 
 ### Security Controls at a Glance
 
-<!-- TODO(Gloire): the firewall rules in plain words. Bastion: SSH only from
-     allowed IPs. App VM: HTTP only from the Load Balancer, SSH only from the
-     bastion. Cosmos DB: only the private subnet. Everything else denied. -->
+| Where | What is allowed in |
+| ----- | ------------------ |
+| **Bastion VM** | SSH (22) only from the team's IPs (`allowed_ssh_cidrs`). During a deploy, CD adds a rule for the runner's IP and removes it when it finishes |
+| **App VM** | Port 80 from the internet, which can only arrive through the Load Balancer because the VM has no public IP. The Load Balancer's health check. SSH only from the bastion subnet. Metrics (9100, 9464) only from the monitoring VM |
+| **Monitoring VM** | Grafana (3000) and SSH only from the bastion subnet |
+| **Cosmos DB** | Only the private subnet. The internet and our laptops are refused |
+| **ACR** | No admin password. The app VM can only pull (AcrPull), CD can only push (AcrPush) |
+| **Everything else** | Blocked by a `deny-all-inbound` rule on both firewalls |
 
 ## Technology Stack
 
@@ -169,25 +139,103 @@ findr/
    ```
 
 2. **Provision the infrastructure with Terraform**
-   <!-- TODO(Gloire): the short version: create the state storage once
-        (bootstrap), copy terraform.tfvars.example, terraform init / plan /
-        apply, and which outputs to note. Link terraform/README.md. -->
+
+   You need **Owner** on the subscription, or **Contributor** plus **Role Based Access Control Administrator**, because Terraform gives roles to the VMs and the CD pipeline. From the `terraform/` folder (PowerShell):
+
+   ```powershell
+   az login
+   $env:ARM_SUBSCRIPTION_ID = (az account show --query id -o tsv)
+
+   # Skip this line: the team already created the shared state storage.
+   # Only run it when setting up the project in a new Azure subscription.
+   powershell -ExecutionPolicy Bypass -File .\bootstrap\create-state-storage.ps1
+
+   cp terraform.tfvars.example terraform.tfvars
+   ```
+
+   In `terraform.tfvars`, set `location` and put your IP in `allowed_ssh_cidrs` with `/32` at the end (find it at https://ifconfig.me). Then:
+
+   ```powershell
+   terraform init      # connects to the shared state
+   terraform plan      # shows what will be built
+   terraform apply     # builds it, type yes
+   terraform output
+   ```
+
+   Note `app_url` (the site), `bastion_public_ip`, `ssh_bastion_command` and `ssh_app_command` (to log in), `grafana_tunnel_command` and `acr_login_server`. The full guide is in [terraform/README.md](terraform/README.md).
+
 
 3. **Let GitHub Actions log in to Azure**
-   <!-- TODO(Bonae): the managed identity findr-github-cd, its federated
-        credential for main, and its roles. -->
+
+   CD logs in to Azure as the managed identity `findr-github-cd`, with OIDC. No cloud password is stored anywhere: a federated credential tells Azure to trust GitHub's short-lived tokens, but only from this repository's `main` branch. Create it once, in a resource group that `terraform destroy` doesn't delete (such as `findr-tfstate-rg`):
+
+   ```powershell
+   $rg = "findr-tfstate-rg"
+   az identity create --name findr-github-cd --resource-group $rg
+
+   az identity federated-credential create --name github-main `
+     --identity-name findr-github-cd --resource-group $rg `
+     --issuer https://token.actions.githubusercontent.com `
+     --subject repo:findr1/findr:ref:refs/heads/main `
+     --audiences api://AzureADTokenExchange
+
+   # clientId goes in the AZURE_CLIENT_ID secret, principalId in cd_principal_id
+   az identity show --name findr-github-cd --resource-group $rg --query "{clientId: clientId, principalId: principalId}"
+   ```
+
+   Put the `principalId` in `cd_principal_id` in `terraform.tfvars` and run `terraform apply` again. Terraform then gives the identity only what CD needs:
+
+   | Role | On | Why |
+   | ---- | -- | --- |
+   | AcrPush | The container registry | Push the new image |
+   | Reader | `findr-dev-rg` | Find the registry and the server addresses |
+   | Network Contributor | The bastion firewall | Open SSH for the runner during a deploy, then close it |
+
+   It also needs **Storage Blob Data Contributor** on the state storage, given once by hand (the command is in [terraform/README.md](terraform/README.md#give-a-teammate-access)).
+
 
 4. **Add the GitHub secrets**
-   <!-- TODO(Shina): table of every secret CD needs and where each comes from. -->
+
+   In GitHub, go to **Settings → Secrets and variables → Actions → New repository secret** and add:
+
+   | Secret | What it is | Where to get it |
+   | ------ | ---------- | --------------- |
+   | `AZURE_CLIENT_ID` | The `findr-github-cd` identity | `clientId` from the `az identity show` command in step 3 |
+   | `AZURE_TENANT_ID` | Our Azure tenant | `az account show --query tenantId -o tsv` |
+   | `AZURE_SUBSCRIPTION_ID` | Our Azure subscription | `az account show --query id -o tsv` |
+   | `SSH_PRIVATE_KEY` | The private key the VMs were built with, so CD can SSH through the bastion | The whole private key file, with no passphrase |
+   | `MONGODB_URI` | The Cosmos DB connection string | `terraform output -raw mongodb_uri` |
+   | `ADMIN_TOKEN` | The password for the admin (moderation) routes | Any long random string you choose |
+   | `DISCORD_WEBHOOK_URL` | Where CD posts each deploy's result | In Discord: **Edit Channel → Integrations → Webhooks → Copy Webhook URL**. Optional: without it CD skips the message |
 
 5. **Deploy**
-   <!-- TODO(Shina): merge to main and CD does the rest. Also how to deploy by
-        hand with Ansible (link ansible/README.md, Norette). -->
+
+   Merge a pull request into `main`. The [CD pipeline](#cd-pipeline) checks the code, builds the image, deploys it and tests the live site. Nothing else is needed.
+
+   To deploy by hand instead, run the Ansible playbook through the bastion. The steps and the environment variables it needs are in [ansible/README.md](ansible/README.md#deploying-to-azure-bastion-setup). The monitoring VM is set up the same way with `ansible-playbook monitoring.yml`.
 
 ### Tearing Down
 
-<!-- TODO(Gloire): terraform destroy, what it leaves behind on purpose (the
-     state storage), and how to check nothing is left in the Azure portal. -->
+The VMs and the Load Balancer use Azure credit every hour, even when nobody visits the site. To delete everything, from the `terraform/` folder:
+
+```powershell
+terraform destroy   # type yes
+```
+
+This deletes `findr-dev-rg` and everything in it: the VMs, Load Balancer, public IPs, firewalls, VNet, the registry and its images, and **Cosmos DB with all saved items**. `terraform apply` builds it all again when you need it.
+
+It leaves two things on purpose, because Terraform doesn't manage them:
+
+- **The state storage** (`findr-tfstate-rg`), so the team keeps its shared state
+- **The `findr-github-cd` identity**, so CD can log in again after the next `apply`
+
+To check nothing else is left, this should print nothing:
+
+```powershell
+az resource list --tag project=findr --output table
+```
+
+In the Azure portal, **Resource groups** should no longer list `findr-dev-rg`.
 
 ## Run Locally
 
@@ -247,37 +295,139 @@ The `Dockerfile` has three stages: build the website, install the API packages w
 
 ### CI Pipeline
 
-<!-- TODO(Shina): triggers, the jobs (lint and test, npm audit, Trivy,
-     container check, Checkov), that each scan fails the build on HIGH or
-     CRITICAL, and that all checks are required to merge
-     (docs/branch-protection.md). -->
+**Runs on:** every push to a branch other than `main`, and every pull request into `main`. A new push cancels the run still going on the same branch.
+
+| Job | What it does | Fails when |
+| --- | ------------ | ---------- |
+| **Lint and test (backend)** | ESLint, then the Jest tests. Keeps the test results as an artifact | A lint error or a failing test |
+| **Lint and test (frontend)** | ESLint, then builds the website. Keeps the build as an artifact | A lint error or the build breaks |
+| **Dependency scan** (backend and frontend) | `npm audit` on the packages | A HIGH or CRITICAL problem |
+| **Image scan (Trivy)** | Builds the Docker image and scans it | A HIGH or CRITICAL problem that already has a fix |
+| **Docker build** | Builds the image and checks the container starts and `/api/health` answers. Only runs after the tests and both scans pass | The container doesn't start |
+| **Terraform scan (Checkov)** | Scans the Terraform code ([terraform-scan.yml](.github/workflows/terraform-scan.yml)) | Any failed check. Accepted findings are skipped in the code with a written reason |
+
+Each scan keeps its full report as an artifact, even when it fails. Accepted findings and the reasons are in [SECURITY.md](SECURITY.md).
+
+**All seven checks are required to merge**, and `main` only takes changes through a reviewed pull request. The rules are in [docs/branch-protection.md](docs/branch-protection.md).
 
 ### CD Pipeline
 
-<!-- TODO(Shina): trigger (merge to main only), the stages in order, the
-     temporary bastion firewall rule, the smoke test, the Discord message,
-     and how long a deploy takes. -->
+**Runs on:** a merge into `main` only, never on pull requests ([cd.yml](.github/workflows/cd.yml)). One deploy runs at a time. A new merge waits for the running deploy to finish instead of cancelling it halfway.
+
+1. **Check again:** runs all of CI and the Checkov scan on the merged code. Nothing is deployed unless every check passes
+2. **Log in to Azure** with OIDC as `findr-github-cd`. No cloud password is stored
+3. **Build and push** the image to ACR, tagged with the commit SHA, so every running version can be traced to its commit
+4. **Open the bastion firewall** for this runner's IP only (a temporary rule at priority 110). The bastion is closed to the internet between deploys
+5. **Deploy with Ansible** through the bastion: the app VM logs in to ACR with a short-lived token, pulls the new image and restarts with `docker compose up -d`
+6. **Close the firewall.** This step runs even if the deploy failed or was cancelled, so the rule is never left open
+7. **Smoke test** the live site through the Load Balancer, like a real user. `/api/ready` must answer and must be using the database (`"storage": "mongodb"`), or the deploy fails
+8. **Tell the team** in Discord, whatever the result: deployed (with the link), checks failed, deploy failed, or cancelled. The message has the commit and a link to the run
+
+A deploy takes about **8 to 10 minutes** from merge to the Discord message.
 
 ## Security Measures
 
-<!-- TODO(Shina): the scans and what they block, network security (private
-     VMs, bastion, NSGs), secret management (GitHub secrets, OIDC with no
-     stored cloud password, no admin user on ACR), and a link to SECURITY.md. -->
+### Scans
+
+Four scans run on every pull request and again before every deploy. Each one blocks the merge when it fails:
+
+| Scan | What it checks | Blocks on |
+| ---- | -------------- | --------- |
+| `npm audit` | The backend and frontend packages | HIGH or CRITICAL |
+| Trivy | The Docker image (OS packages and Node packages) | HIGH or CRITICAL with a fix available |
+| Checkov | The Terraform code | Any failed check, unless skipped in the code with a reason |
+| Container check | The image starts and `/api/health` answers | Any failure |
+
+The Trivy action is pinned to a commit, not a tag, because its tags were hijacked in March 2026.
+
+### Network Security
+
+- The app and monitoring VMs have **no public IP**. Users only reach the app through the Load Balancer on port 80
+- The **bastion** is the only way in for SSH. It accepts only the team's IPs, plus the CD runner's IP while a deploy is running
+- **Firewalls (NSGs)** on both subnets allow only the traffic listed in [Security Controls at a Glance](#security-controls-at-a-glance) and block everything else
+- **Cosmos DB** only accepts the private subnet. `/metrics` runs on its own port that only the monitoring VM can reach
+- The Ansible `hardening` role turns off root login and password login over SSH, and adds fail2ban
+
+### Secret Management
+
+- **No secrets in git.** `.env` files, Terraform state and `.tfvars`, and private keys are all in `.gitignore`. Secrets live in GitHub Actions secrets
+- **No stored cloud password.** CD logs in to Azure with OIDC, and Azure only trusts tokens from this repository's `main` branch
+- **No registry password.** ACR has its admin user turned off. CD pushes with its Azure role (AcrPush), and the app VM pulls with a short-lived token
+- **No storage keys.** The Terraform state storage has access keys turned off. People log in with `az login`
+- The app runs as the `node` user, not root
+
+The scan findings, accepted risks and how to report a problem are in [SECURITY.md](SECURITY.md).
 
 ## Monitoring and Observability
 
-<!-- TODO(Bonae): /api/health vs /api/ready, /metrics, the Grafana dashboard,
-     the alert rules, and how to open Grafana through the bastion. -->
+### Health Checks
 
-<!-- TODO(Shina): alerts go to the team's #findr-alerts Discord channel, and
-     every deploy posts its result there too. -->
+| Endpoint | What it checks | Used by |
+| -------- | -------------- | ------- |
+| `/api/health` | The app is running | The Load Balancer health probe, the Docker health check |
+| `/api/ready` | The app is running **and** the database answers within 2 seconds. Returns `503` if not | The CD smoke test, Prometheus's website check |
+
+### Metrics
+
+The app serves `/metrics` on its own port, **9464**, so it is never on the public website. The firewall lets only the monitoring VM reach it. Prometheus reads it every 15 seconds:
+
+- `findr_http_requests_total`: requests answered, by page and status
+- `findr_http_request_duration_seconds`: how long each request took
+- `findr_db_up`: `1` if the database answers, `0` if not
+- Node.js process metrics (memory, CPU, event loop), all starting with `findr_`
+
+node_exporter (port 9100) adds the server's CPU, memory and disk. blackbox_exporter visits `/api/ready` like a user would.
+
+### Grafana Dashboard
+
+The **Findr overview** dashboard is loaded automatically. It shows whether the website, the database and the app are up, requests per second (in total and by page), the 5xx error rate, response time, server CPU and memory, and any alerts firing.
+
+Grafana has no public address. Open it through the bastion, from the `terraform/` folder:
+
+```powershell
+terraform output -raw grafana_tunnel_command   # copy and run it, keep it open
+```
+
+Then open `http://localhost:3000`.
+
+### Alert Rules
+
+| Alert | When | Severity |
+| ----- | ---- | -------- |
+| SiteDown | The public site hasn't answered for 2 minutes | critical |
+| AppNotReporting | Prometheus can't read `/metrics` for 2 minutes | critical |
+| DatabaseDown | The app can't reach Cosmos DB for 1 minute | critical |
+| HighErrorRate | Over 5% of requests are 5xx for 5 minutes | warning |
+| SlowResponses | 1 in 20 requests takes over 1 second for 5 minutes | warning |
+| HighCPU | CPU above 85% for 10 minutes | warning |
+| HighMemory | Memory above 90% for 10 minutes | warning |
+| DiskAlmostFull | Under 10% disk left for 10 minutes | warning |
+
+The rules are in [monitoring/prometheus/alert-rules.yml](monitoring/prometheus/alert-rules.yml).
+
+### Notifications
+
+Alertmanager sends every alert to the team's `#findr-alerts` Discord channel as **Findr Alerts**, and posts again when the problem is fixed. Related alerts are grouped, and an alert that is still firing is repeated every 4 hours. The webhook URL is never in git: Alertmanager reads it from `monitoring/alertmanager/secrets/discord-webhook`, a file git ignores.
+
+Every deploy also posts its result to the same channel as **Findr CD**, so the team sees both what was released and when something breaks.
 
 ## Challenges and Solutions
 
-<!-- TODO(everyone): one short entry each, in the form
-     **Challenge:** ... **Solution:** ...
-     Shina: reusing CI inside CD without the concurrency groups cancelling
-     each other; opening SSH only during deploys. -->
+| Challenge | How we solved it |
+| --------- | ---------------- |
+| **GitHub couldn't log in to Azure.** Student accounts can't create app registrations, and later the login failed because GitHub changed the format of the repository name it sends. | We used a managed identity with OIDC instead (no password), and added a second trust rule in the new format. It still only trusts `main`. |
+| **The pipeline's SSH key didn't work.** The secret first held the public key, then a cut-off private key, then one with Windows line endings. | We saved the full private key. The pipeline now removes Windows line endings, checks the key, and prints its name (never the key itself). |
+| **Keeping the bastion closed.** The runner's IP changes on every run, and a new firewall rule takes a few seconds to work. | CD opens SSH for the runner's IP only, waits until the bastion answers, and always closes the rule at the end, even if the deploy fails. |
+| **The private VMs had no internet.** With no public IP, they couldn't download packages or pull images. | The Load Balancer's outbound rule gives them a way out, without opening any way in. |
+| **CI cancelled itself inside CD.** When CD reused the CI workflow, both runs shared one concurrency group and cancelled each other. | We gave each workflow a fixed concurrency group name. |
+| **Empty registry address.** Azure printed the registry name and address on two lines, and the script only read the first. | We read both on one line, and the pipeline stops with a clear message if the address is empty. |
+| **Shared Terraform state.** An old local `terraform.tfvars` would have rebuilt both VMs, and an old branch tried to delete the database. | We always pull `main` first and read the plan's "destroy" count before `apply`. |
+| **Cosmos DB is not exactly MongoDB.** It needs an index for every sort and only allows unique indexes on empty collections. | Terraform creates the collections and indexes before any data is added. No app code changed. |
+| **Keeping metrics private.** `/metrics` must not be on the public website. | The app serves it on its own port (9464), which only the monitoring VM can reach. |
+| **Alerts didn't reach Discord.** They showed in Grafana but were still "pending", and no webhook was set. | We documented pending vs firing and set the webhook outside the code. |
+| **The Trivy action was hijacked.** In March 2026, attackers took over its version tags to steal CI secrets. | We pinned it to the commit of v0.35.0, the one release that wasn't affected, so its code can't change under us. |
+| **npm audit flagged our dev tools.** The findings were in ESLint, Jest and the shadcn CLI, which never reach the live app, and shadcn was wrongly listed as an app dependency. | We moved shadcn to devDependencies, and wrote up the low-severity findings as accepted risks, with reasons, in [SECURITY.md](SECURITY.md). |
+| **Sharing secrets while debugging.** Keys and connection strings ended up in chat. | Secrets now go only into GitHub secrets, and any leaked key is replaced. |
 
 ## Video Demo
 
