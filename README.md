@@ -1,239 +1,298 @@
 # Findr
 
-> A simple lost and found app for the ALU campus.
+> A simple lost and found app for the ALU campus, deployed to Azure with a fully automated Git-to-Production pipeline.
 
-[![CI](https://github.com/GLOIRE5/findr/actions/workflows/ci.yml/badge.svg)](https://github.com/GLOIRE5/findr/actions/workflows/ci.yml)
+[![CI](https://github.com/findr1/findr/actions/workflows/ci.yml/badge.svg)](https://github.com/findr1/findr/actions/workflows/ci.yml)
+[![Deploy to Production](https://github.com/findr1/findr/actions/workflows/cd.yml/badge.svg)](https://github.com/findr1/findr/actions/workflows/cd.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-## African Context
+**Live app:** http://102.37.96.165 · **Demo video:** _coming soon_
 
-On many African campuses, ALU included, lost and found happens in WhatsApp groups. Posts get buried under hundreds of new messages within hours, old posts can't be searched, and nobody knows if an item was ever returned.
+<!--
+  README OPERATIONS MANUAL (#128). Shina leads, everyone writes their own part.
+  Find your name in a TODO comment like this one, write that section, then
+  delete the comment. Keep it short and simple: link to the detailed READMEs
+  (terraform/, ansible/, SECURITY.md) instead of repeating them.
+-->
 
-Losing an item is expensive for students. A lost phone often means a lost mobile money (MoMo) wallet and SIM card. A lost ID, student card, or laptop charger can take weeks and money to replace. People who find items also have no safe way to return them.
+## Table of Contents
 
-Findr gives the campus one place to post and search lost and found items. Owners answer a question about the item before they can claim it, so items go back to the right person. It is built for phones, uses little data, and works with the tools students already use: finders can share a post straight to WhatsApp.
+1. [About Findr](#about-findr)
+2. [Team Members](#team-members)
+3. [Live Application](#live-application)
+4. [Architecture Overview](#architecture-overview)
+5. [Technology Stack](#technology-stack)
+6. [Repository Structure](#repository-structure)
+7. [Setup Instructions](#setup-instructions)
+8. [Run Locally](#run-locally)
+9. [CI/CD Pipeline](#cicd-pipeline)
+10. [Security Measures](#security-measures)
+11. [Monitoring and Observability](#monitoring-and-observability)
+12. [Challenges and Solutions](#challenges-and-solutions)
+13. [Video Demo](#video-demo)
+14. [Links](#links)
+15. [License](#license)
+
+## About Findr
+
+On many African campuses, ALU included, lost and found happens in WhatsApp groups. Posts get buried within hours, old posts can't be searched, and nobody knows if an item was ever returned. A lost phone often means a lost mobile money wallet and SIM card.
+
+Findr gives the campus one place to post and search lost and found items. It is built for phones, uses little data, and works with the tools students already use.
+
+- **Report an item:** post a lost or found item with its category, place, date and contact, and share it to WhatsApp in one tap
+- **Search and filter:** by name, place, status and category
+- **Verified claims:** the finder sets a secret question, and their contact is shown only after the right answer
+- **Mark as returned:** close a post once the item is back with its owner
 
 ## Team Members
 
-- Bonae - Backend developer
-- Gloire - Backend developer
-- Norette - Frontend developer
-- Shina - Frontend developer
+| Name                 | Role                               | Built                                                                                                |
+| -------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Gloire Gwiza         | Infrastructure (Terraform)         | Shared state, network, bastion, app VM, Load Balancer, firewalls, ACR                                |
+| Bonae Ineza Gisubizo | Database, app and Azure setup      | Cosmos DB, `/api/ready`, GitHub-to-Azure login (OIDC), budget alert, metrics, Prometheus and Grafana |
+| Norette Atete        | Configuration management (Ansible) | Deploy playbook through the bastion, Docker Compose deploy, monitoring role, architecture diagram    |
+| Shina Atete Mpeta    | CI/CD and documentation            | CD pipeline, bastion firewall during deploys, smoke test, Discord alerts, this README                |
 
-## Project Overview
+## Live Application
 
-Findr is a web app where anyone on campus can report something they lost or found. Each post has a category, where and when it happened, and a way to reach the person who posted it. Everyone else can browse the board, search by name or place, and filter by status and category.
+[**Open Findr**](http://102.37.96.165)
 
-When someone posts a found item, they set a secret question that only the real owner could answer, such as "What's the lock screen photo?". The finder's contact is only shown to someone who answers it correctly. Once the item is back with its owner, the post is marked as returned.
+<!-- TODO(Shina): after the first green deploy, add a screenshot of the live app
+     and the /api/ready response, e.g. docs/images/live-app.png -->
 
-The app has two parts: a Node.js and Express API that stores items and checks claims, and a React website that talks to it.
+## Architecture Overview
 
-### Target Users
+### Architecture Diagram
 
-- **Students and staff who lost something:** a quick way to check if someone found their item.
-- **Finders:** a safe and easy way to return an item without sharing their number publicly.
-- **Campus security and admin:** a clear record of items handed in to them.
+<!-- TODO(Norette, #127): replace the Mermaid diagram below with the draw.io image:
+     ![Findr architecture](docs/images/architecture.png) -->
 
-### Core Features
+```mermaid
+flowchart LR
+  user([Users]) -->|HTTP 80| lb[Load Balancer<br/>public IP]
+  dev([Team / CD runner]) -->|SSH 22, allowed IPs only| bastion
 
-- **Report an item:** post a lost or found item with its category, campus location, date, and contact (WhatsApp or email). Share the post to WhatsApp in one tap.
-- **Search and filter:** find items by name or location, and filter by status and category.
-- **Verified claims:** the finder sets a secret question, and their contact is shared only after the right answer.
-- **Mark as returned:** close a post once the item is back with its owner.
-- **Alerts (planned):** get an SMS or WhatsApp message when a found item matches your lost item.
+  subgraph vnet[Azure VNet]
+    subgraph pub[Public subnet]
+      bastion[Bastion VM]
+    end
+    subgraph priv[Private subnet - no public IPs]
+      app[App VM<br/>Docker Compose: Findr :80]
+      mon[Monitoring VM<br/>Prometheus, Grafana, Alertmanager]
+    end
+  end
+
+  lb -->|port 80, health probe| app
+  bastion -->|SSH only from bastion| app
+  bastion -->|SSH, Grafana tunnel| mon
+  mon -->|scrape metrics| app
+  app -->|private subnet only| cosmos[(Cosmos DB<br/>MongoDB API)]
+  app -->|pull image| acr[(ACR<br/>private registry)]
+  mon -->|alerts| discord([Discord])
+
+  subgraph gh[GitHub Actions]
+    ci[CI: lint, tests,<br/>Trivy, Checkov] --> cd[CD on merge to main]
+  end
+  cd -->|push image :sha| acr
+  cd -->|OIDC login| azure([Azure])
+  cd -->|Ansible via bastion| bastion
+```
+
+### Component Description
+
+<!-- TODO(Gloire): one or two lines per component (VNet and subnets, bastion,
+     app VM, Load Balancer, NSGs, ACR, shared state) and how they connect.
+     Details live in terraform/README.md, so link there. -->
+
+<!-- TODO(Bonae): Cosmos DB (MongoDB API, free tier, private subnet only) and
+     the monitoring VM. -->
+
+### Security Controls at a Glance
+
+<!-- TODO(Gloire): the firewall rules in plain words. Bastion: SSH only from
+     allowed IPs. App VM: HTTP only from the Load Balancer, SSH only from the
+     bastion. Cosmos DB: only the private subnet. Everything else denied. -->
 
 ## Technology Stack
 
-- **Backend**: Node.js 22 and Express 5
-- **Frontend**: React 19, Vite, React Router, Tailwind CSS, shadcn/ui
-- **Database**: MongoDB (the tests use an in-memory store)
-- **Other**: Jest and Supertest (backend tests), ESLint (backend and frontend), GitHub Actions (CI), Docker and Docker Compose
+- **Cloud provider:** Microsoft Azure (South Africa North)
+- **Application:** Node.js 22 and Express 5 (API), React 19 and Vite (website)
+- **Database:** Azure Cosmos DB for MongoDB (local development uses MongoDB in Docker)
+- **Container registry:** Azure Container Registry (ACR)
+- **Infrastructure as Code:** Terraform, with shared state in Azure Storage
+- **Configuration management:** Ansible
+- **CI/CD:** GitHub Actions
+- **Security scanning:** Trivy (image), Checkov (Terraform), npm audit (packages)
+- **Monitoring:** Prometheus, Grafana, Alertmanager (alerts to Discord)
 
-## Getting Started
+## Repository Structure
+
+```
+findr/
+├── .github/workflows/
+│   ├── ci.yml               # CI on every PR: lint, tests, npm audit, Trivy, container check
+│   ├── terraform-scan.yml   # Checkov scan of the Terraform code
+│   └── cd.yml               # CD on merge to main: re-run CI, push to ACR, deploy with Ansible
+├── terraform/               # Azure infrastructure (see terraform/README.md)
+│   └── modules/             # network, security, compute, loadbalancer, registry, database
+├── ansible/                 # Server setup and deploys (see ansible/README.md)
+│   ├── deploy.yml           # Deploys Findr to the private app VM through the bastion
+│   ├── monitoring.yml       # Installs the monitoring stack
+│   └── roles/               # swap, docker, hardening, app_deploy, monitoring
+├── monitoring/              # Prometheus, Grafana and Alertmanager config
+├── backend/                 # API (Node.js + Express) and its tests
+├── frontend/                # Website (React + Vite)
+├── docs/                    # Architecture, branch protection, screenshots
+├── Dockerfile               # One image with the website and the API
+├── docker-compose.yml       # Runs the app and MongoDB together locally
+├── SECURITY.md              # Scan results, fixes and accepted risks
+└── CHANGELOG.md             # How Findr grew from Formative 1 to the Summative
+```
+
+## Setup Instructions
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) 22.9 or higher
-- npm 10 or higher
-- Git
+- An Azure subscription, and the [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) logged in with `az login`
+- [Terraform](https://developer.hashicorp.com/terraform/install) 1.5 or newer
+- [Ansible](https://docs.ansible.com/ansible/latest/installation_guide/) (to deploy by hand; CD installs its own)
+- An SSH key pair at `~/.ssh/findr` and `~/.ssh/findr.pub`
+- A GitHub account with admin access to this repository (for secrets)
 
-### Installation
+### Deployment Steps
 
-1. Clone the repository
-```bash
-   git clone https://github.com/GLOIRE5/findr.git
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/findr1/findr.git
    cd findr
-```
+   ```
 
-2. Install and start the backend (API)
-```bash
+2. **Provision the infrastructure with Terraform**
+   <!-- TODO(Gloire): the short version: create the state storage once
+        (bootstrap), copy terraform.tfvars.example, terraform init / plan /
+        apply, and which outputs to note. Link terraform/README.md. -->
+
+3. **Let GitHub Actions log in to Azure**
+   <!-- TODO(Bonae): the managed identity findr-github-cd, its federated
+        credential for main, and its roles. -->
+
+4. **Add the GitHub secrets**
+   <!-- TODO(Shina): table of every secret CD needs and where each comes from. -->
+
+5. **Deploy**
+   <!-- TODO(Shina): merge to main and CD does the rest. Also how to deploy by
+        hand with Ansible (link ansible/README.md, Norette). -->
+
+### Tearing Down
+
+<!-- TODO(Gloire): terraform destroy, what it leaves behind on purpose (the
+     state storage), and how to check nothing is left in the Azure portal. -->
+
+## Run Locally
+
+### With Node.js
+
+Needs [Node.js](https://nodejs.org/) 22.9 or newer.
+
+1. Start the API
+
+   ```bash
    cd backend
    npm install
    cp .env.example .env    # set MONGODB_URI here to use MongoDB
    npm run dev
-```
-   The API runs at `http://localhost:3000`. Open `http://localhost:3000/api/health` to check it works. Without `MONGODB_URI`, items are kept in memory and are lost when the server stops.
+   ```
 
-3. Run the application: in a second terminal, install and start the frontend
-```bash
+   The API runs at `http://localhost:3000`. Without `MONGODB_URI`, items are kept in memory and are lost when the server stops.
+
+2. In a second terminal, start the website
+   ```bash
    cd frontend
    npm install
    npm run dev
-```
+   ```
    The website runs at `http://localhost:5173`.
 
-To run the same checks as CI before you push, see [CI pipeline](#ci-pipeline).
+### With Docker Compose
 
-### Usage
-
-1. Open `http://localhost:5173` to see the board of lost and found items. Search by name or place, or filter by status and category.
-2. Click **Report item**, choose **I lost something** or **I found something**, and fill in the form. Finders pick or write a secret question for the owner.
-3. After posting, share the item to WhatsApp or copy its link.
-
-The frontend uses these API endpoints:
-
-| Method | Endpoint | What it does |
-|--------|----------|--------------|
-| `GET` | `/api/items` | List items (filter with `?status=lost&category=electronics&location=Library`) |
-| `POST` | `/api/items` | Report a lost or found item |
-| `GET` | `/api/items/:id` | Get one item |
-| `POST` | `/api/items/:id/claim` | Claim an item by answering its question |
-| `PATCH` | `/api/items/:id/returned` | Mark an item as returned |
-
-## Run with Docker
-
-### Prerequisites
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-
-### Run the whole app with Docker Compose
-
-From the root of the repository, run one command:
+Needs [Docker Desktop](https://www.docker.com/products/docker-desktop/) running. From the repository root:
 
 ```bash
 docker compose up --build
 ```
 
-This starts two containers:
-
-- **app**: the website and the API, built from the `Dockerfile`
-- **db**: a MongoDB database. Items are saved in the `mongo-data` volume, so they are still there after a restart
-
-Open `http://localhost:3000` to use Findr. Open `http://localhost:3000/api/health` to check the API.
-
-To stop it:
-```bash
-docker compose down        # keeps the saved items
-docker compose down -v     # also deletes the saved items
-```
-
-### Change the settings (optional)
-
-Compose works without any setup. The default database password is only for your own laptop. To change the port or the password, copy the example file and edit it:
+This starts the **app** (website and API, built from the `Dockerfile`) and **db** (MongoDB, data kept in the `mongo-data` volume). Open `http://localhost:3000`.
 
 ```bash
-cp .env.example .env
+docker compose down        # stop, keep the saved items
+docker compose down -v     # stop and delete the saved items
 ```
 
-If you change the password after the first start, run `docker compose down -v` once so MongoDB is created again with the new login.
+The `Dockerfile` has three stages: build the website, install the API packages without test tools, then copy only what is needed into a small final image that runs as the `node` user with a health check on `/api/health`.
 
-### How the Docker image is built
+### API Endpoints
 
-The `Dockerfile` has three stages:
+| Method  | Endpoint                  | What it does                                                                  |
+| ------- | ------------------------- | ----------------------------------------------------------------------------- |
+| `GET`   | `/api/health`             | The app is running                                                            |
+| `GET`   | `/api/ready`              | The app and its database are both working                                     |
+| `GET`   | `/api/items`              | List items (filter with `?status=lost&category=electronics&location=Library`) |
+| `POST`  | `/api/items`              | Report a lost or found item                                                   |
+| `GET`   | `/api/items/:id`          | Get one item                                                                  |
+| `POST`  | `/api/items/:id/claim`    | Claim an item by answering its question                                       |
+| `PATCH` | `/api/items/:id/returned` | Mark an item as returned                                                      |
 
-1. **frontend**: builds the React website into static files
-2. **backend**: installs the API packages, without test tools
-3. **final image**: copies only the built website, the API code and its packages. It runs as the `node` user, not root, and has a health check on `/api/health`
+## CI/CD Pipeline
 
-### Run only the app container
+### CI Pipeline
 
-Without a database, the API keeps items in memory.
+<!-- TODO(Shina): triggers, the jobs (lint and test, npm audit, Trivy,
+     container check, Checkov), that each scan fails the build on HIGH or
+     CRITICAL, and that all checks are required to merge
+     (docs/branch-protection.md). -->
 
-```bash
-docker build -t findr .
-docker run --rm -p 3000:3000 findr
-```
+### CD Pipeline
 
-Press `Ctrl+C` to stop it.
+<!-- TODO(Shina): trigger (merge to main only), the stages in order, the
+     temporary bastion firewall rule, the smoke test, the Discord message,
+     and how long a deploy takes. -->
 
-## CI pipeline
+## Security Measures
 
-GitHub Actions checks the code automatically, using [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+<!-- TODO(Shina): the scans and what they block, network security (private
+     VMs, bastion, NSGs), secret management (GitHub secrets, OIDC with no
+     stored cloud password, no admin user on ACR), and a link to SECURITY.md. -->
 
-### When it runs
+## Monitoring and Observability
 
-- On every push to any branch except `main`
-- On every pull request into `main`
+<!-- TODO(Bonae): /api/health vs /api/ready, /metrics, the Grafana dashboard,
+     the alert rules, and how to open Grafana through the bastion. -->
 
-`main` only changes through pull requests, so it is always checked before code reaches it. If you push again while a run is still going, the older run is cancelled.
+<!-- TODO(Shina): alerts go to the team's #findr-alerts Discord channel, and
+     every deploy posts its result there too. -->
 
-### What it checks
+## Challenges and Solutions
 
-| Job | Steps |
-|-----|-------|
-| **Lint and test (backend)** | Install, ESLint, Jest tests |
-| **Lint and test (frontend)** | Install, ESLint, build the website |
-| **Docker build** | Build the image, start it and check `/api/health` answers |
+<!-- TODO(everyone): one short entry each, in the form
+     **Challenge:** ... **Solution:** ...
+     Shina: reusing CI inside CD without the concurrency groups cancelling
+     each other; opening SSH only during deploys. -->
 
-The backend and frontend jobs run at the same time. **Docker build** only starts when both pass. If any step fails, the run fails and the pull request can't be merged (see [Branch protection rules](./docs/branch-protection.md)). npm packages and Docker layers are cached, so later runs are faster.
+## Video Demo
 
-### Run the same checks locally
+<!-- TODO(Shina): add the unlisted YouTube link once it is uploaded. -->
 
-Run these before you push to catch problems early:
-
-```bash
-cd backend
-npm run lint
-npm test
-
-cd ../frontend
-npm run lint
-npm run build
-
-cd ..
-docker build -t findr .
-```
-
-## Project Structure
-
-```
-findr/
-├── .github/
-│   └── workflows/
-│       └── ci.yml              # CI: lint, tests, build and Docker image
-├── backend/                    # API (Node.js + Express)
-│   ├── src/
-│   │   ├── controllers/        # Report, search and claim logic
-│   │   ├── data/               # Seed items
-│   │   ├── routes/             # API routes
-│   │   ├── store/              # Item storage (MongoDB, or in-memory for tests)
-│   │   ├── utils/              # Helpers, e.g. hiding private fields
-│   │   ├── app.js              # Builds the Express app
-│   │   └── index.js            # Starts the server
-│   ├── tests/                  # Jest + Supertest tests
-│   └── .env.example            # Example environment variables
-├── frontend/                   # Website (React + Vite)
-│   └── src/
-│       ├── components/         # Header, chips, success screen
-│       │   └── ui/             # shadcn/ui components
-│       ├── data/               # Sample items and form options
-│       ├── lib/                # API calls and helpers
-│       └── pages/              # Items list, report form
-├── .dockerignore               # Files left out of the Docker image
-├── .env.example                # Optional settings for Docker Compose
-├── docker-compose.yml          # Runs the app and MongoDB together
-├── Dockerfile                  # Builds one image with the website and API
-├── LICENSE
-└── README.md
-```
+_Coming soon._
 
 ## Links
 
-- [Project Board](https://github.com/GLOIRE5/findr/projects)
-- [CI runs](https://github.com/GLOIRE5/findr/actions)
+- [Project board](https://github.com/findr1/findr/projects)
+- [CI and CD runs](https://github.com/findr1/findr/actions)
 - [Branch protection rules](./docs/branch-protection.md)
+- [Security scans and accepted risks](./SECURITY.md)
+- [Terraform guide](./terraform/README.md) · [Ansible guide](./ansible/README.md)
 
 ## License
 
 MIT License. See the [LICENSE](./LICENSE) file.
-
