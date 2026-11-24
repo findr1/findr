@@ -18,6 +18,33 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    name: Terraform format and validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      # Fails if any file isn't in the standard layout. Fix with: terraform fmt -recursive
+      - name: Check the formatting
+        run: terraform fmt -check -recursive -diff
+
+      # Downloads the providers but skips the shared state, so no Azure login is needed
+      - name: Set up the working folder
+        run: terraform init -backend=false -input=false
+
+      # Catches typos, wrong argument names and broken links between modules
+      - name: Validate the configuration
+        run: terraform validate
+
   checkov:
     name: Terraform scan (Checkov)
     runs-on: ubuntu-latest
