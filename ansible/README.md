@@ -1,259 +1,152 @@
 # Ansible
 
-This folder sets up the server that Terraform creates, so that Findr runs on it. One command installs Docker, locks the server down, and starts the app with MongoDB. You can run it as many times as you like: a second run changes nothing.
+This folder sets up the servers Terraform creates and deploys Findr to them. The main playbook is **`deploy.yml`**. The CD pipeline runs it on every merge to `main`, and you can run it by hand too. It installs Docker and Docker Compose, locks the server down, logs in to our private registry (ACR), pulls the image for one commit and starts it with `docker compose up -d`. You can run it as many times as you like: a second run changes nothing.
+
+The app VM has no public IP, so Ansible always connects through the bastion.
 
 ## What's in this folder
 
 | Path | What it is |
 |------|------------|
-| `ansible.cfg` | Settings: which inventory to use by default, and how SSH checks the server's identity (see [Inventory](#inventory)) |
-| `inventory/hosts.ini` | Static inventory: the server's IP, typed in by hand, in the `web` group |
-| `inventory/azure_rm.yml` | Dynamic inventory: asks Azure for the server, so nobody copies IPs |
-| `group_vars/web/vars.yml` | Settings for the `web` group: SSH user and key, app image and port, database name |
-| `group_vars/web/vault.yml` | Secrets, encrypted with Ansible Vault: the database password and the GitHub registry login |
+| `deploy.yml` | **Deploys Findr to the app VM.** The playbook CD runs |
+| `monitoring.yml` | Installs node_exporter on the app VM, and Prometheus, Grafana, Alertmanager and blackbox_exporter on the monitoring VM |
+| `inventory.ini` | The two private VMs: `app_server` and `monitoring`. Used by default |
+| `group_vars/app_server/vars.yml` | How to reach the app VM through the bastion, and the deploy settings. Everything comes from environment variables, so no IP or secret is in the code |
+| `group_vars/monitoring/vars.yml` | The same for the monitoring VM |
+| `ansible.cfg` | Default inventory, and how SSH checks the server's identity |
 | `requirements.yml` | Ansible collections the roles need |
-| `playbook.yml` | Runs the four roles on the `web` group |
-| `roles/` | The steps, in four roles. See [What each role does](#what-each-role-does) |
+| `roles/` | The steps. See [What deploy.yml does](#what-deployyml-does) |
+| `playbook.yml`, `inventory/`, `group_vars/web/`, `roles/findr` | The Formative 3 setup, kept for history. See [Formative 3: single VM](#formative-3-single-vm-no-longer-used) |
 
 ## Prerequisites
 
 Ansible doesn't run on Windows. Windows users run everything below in **WSL** (Ubuntu inside Windows).
 
-1. **A server.** Bonae creates it with Terraform (see [`terraform/README.md`](../terraform/README.md)). You need its public IP.
-2. **Ansible**, installed in Ubuntu or WSL:
+1. **The infrastructure**, built with Terraform (see [`terraform/README.md`](../terraform/README.md)).
+2. **Ansible** and the **Azure CLI**, installed in Ubuntu or WSL:
 
    ```bash
    sudo apt update && sudo apt install -y pipx git
    pipx install --include-deps ansible
    pipx ensurepath   # then open a new terminal
+   curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+   az login
    ```
 
-3. **The group's SSH private key**, the pair of the public key Terraform put on the server. Put it in `~/.ssh/` inside WSL and make it readable only by you, or SSH will refuse to use it:
+3. **The team's SSH private key** (`findr-team`), the pair of the public key Terraform put on the VMs. Put it in `~/.ssh/` and make it readable only by you, or SSH refuses to use it:
 
    ```bash
    cp /mnt/c/Users/<you>/Downloads/findr ~/.ssh/findr
    chmod 600 ~/.ssh/findr
    ```
 
-4. **The vault password**, shared privately by the team. Never commit it.
+4. **Your IP in `allowed_ssh_cidrs`** in `terraform.tfvars`, applied, so the bastion lets you in.
 
 5. **The repository inside WSL.** Clone it into your WSL home folder. Don't run it from `/mnt/c/...`: Windows folders are open to every user, so Ansible ignores `ansible.cfg` there.
 
    ```bash
-   cd ~ && git clone https://github.com/GLOIRE5/findr.git
+   cd ~ && git clone https://github.com/findr1/findr.git
    cd findr/ansible
-   ```
-
-6. **The collections** the roles need:
-
-   ```bash
    ansible-galaxy collection install -r requirements.yml
    ```
 
-## Inventory
+## Deploy by hand
 
-The inventory tells Ansible which server to set up. There are two ways to give it one: the dynamic inventory asks Azure, and the static inventory uses an IP you type in. Both put the server in the `web` group, so the playbook works the same either way.
+CD does all of this on its own (see [`.github/workflows/cd.yml`](../.github/workflows/cd.yml)). Do it by hand only to test or to fix a server.
 
-The first time Ansible connects to a server, it saves the server's SSH key. If that key changes later, Ansible refuses to connect, because it could be a different machine pretending to be ours (`StrictHostKeyChecking=accept-new` in [`ansible.cfg`](ansible.cfg)). If Bonae destroys the server and creates it again, remove the old saved key with `ssh-keygen -R <old IP>`.
+### 1. Set the environment variables
 
-### Dynamic inventory (recommended)
+| Variable | What it is | Where to get it |
+|----------|------------|-----------------|
+| `BASTION_IP` | The bastion's public IP | `terraform output -raw bastion_public_ip` |
+| `APP_PRIVATE_IP` | The app VM's private IP | `terraform output -raw app_private_ip` |
+| `APP_URL` | The site's address, used for CORS | `terraform output -raw app_url` |
+| `ACR_LOGIN_SERVER` | The registry's address | `terraform output -raw acr_login_server` |
+| `ACR_TOKEN` | A short-lived registry token. Secret | `az acr login -n <acr_name> --expose-token --query accessToken -o tsv` |
+| `IMAGE_TAG` | Which image to deploy: a commit SHA that CD pushed | GitHub Actions, or `az acr repository show-tags -n <acr_name> --repository findr` |
+| `MONGODB_URI` | The Cosmos DB connection string. Secret | `terraform output -raw mongodb_uri` |
+| `ADMIN_TOKEN` | The password for the admin routes. Secret | The team's `ADMIN_TOKEN` GitHub secret |
+| `SSH_KEY_FILE` | Optional. Path to the private key | Defaults to `~/.ssh/findr` |
 
-[`inventory/azure_rm.yml`](inventory/azure_rm.yml) uses the `azure.azcollection.azure_rm` plugin. It looks in the `findr-dev-rg` resource group that Terraform creates, finds every VM tagged `project=findr` (Terraform adds this tag), and connects to its public IP. If the server is created again with a new IP, nothing needs to change.
+The playbook stops straight away with a clear message if `ACR_LOGIN_SERVER`, `ACR_TOKEN` or `MONGODB_URI` is missing.
 
-It needs two extra things in WSL:
-
-```bash
-# 1. The Azure CLI, then log in with an account on the team's subscription
-curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-az login
-
-# 2. The Python packages the Azure collection needs
-pipx runpip ansible install -r ~/.ansible/collections/ansible_collections/azure/azcollection/requirements.txt
-```
-
-Check what it finds, then use it with `-i`:
-
-```bash
-ansible-inventory -i inventory/azure_rm.yml --graph
-ansible all -i inventory/azure_rm.yml -m ping
-```
-
-`--graph` should show the Findr VM under `@web`. If the list is empty, run `az account show` to check you're logged in to the right subscription, and check that Terraform has created the server.
-
-To run the playbook with it, add `-i inventory/azure_rm.yml` to the commands in [Run the playbook](#run-the-playbook).
-
-### Static inventory
-
-Without Azure access, put the server's IP in [`inventory/hosts.ini`](inventory/hosts.ini). Ansible uses this file by default:
-
-```ini
-[web]
-findr-server ansible_host=<server public IP>
-```
-
-Bonae shares the IP after `terraform apply`. Anyone with the Terraform state can print it:
+### 2. Check Ansible can reach the app VM
 
 ```bash
-terraform -chdir=../terraform output -raw public_ip
+ansible app_server -m ping
 ```
 
-Check that Ansible can reach the server:
+`findr-app | SUCCESS` with `"ping": "pong"` means the bastion jump, the user and the key all work.
+
+### 3. Run the playbook
 
 ```bash
-ansible all -m ping
+ansible-playbook deploy.yml
 ```
 
-`findr-server | SUCCESS` with `"ping": "pong"` means the IP, user and key all work.
-
-## Settings
-
-Change these in [`group_vars/web/vars.yml`](group_vars/web/vars.yml):
-
-| Setting | What it is |
-|---------|------------|
-| `ansible_user` | The user Ansible logs in as. It must match `admin_username` in Terraform (`azureuser`) |
-| `ansible_ssh_private_key_file` | Path to the group's SSH private key |
-| `findr_image` | The app image in GitHub Container Registry |
-| `findr_image_tag` | Which version to deploy: the commit SHA of a pull request that CI built and pushed |
-| `app_public_port` | The port people open in the browser. `80` matches the Terraform firewall. The app listens on `3000` inside its container |
-| `mongo_user`, `mongo_db` | Database user and database name |
-
-These secrets live in the encrypted [`group_vars/web/vault.yml`](group_vars/web/vault.yml):
-
-| Secret | What it is |
-|--------|------------|
-| `vault_mongo_password` | MongoDB root password |
-| `vault_ghcr_username`, `vault_ghcr_token` | Login for GitHub Container Registry. Leave the token empty if the image is public |
-
-To view or change them:
-
-```bash
-ansible-vault edit group_vars/web/vault.yml
-```
-
-## Run the playbook
-
-```bash
-ansible-playbook playbook.yml --ask-vault-pass
-```
-
-To skip typing the vault password each time, save it in a `.vault_pass` file (git ignores it) and run:
-
-```bash
-chmod 600 .vault_pass
-ansible-playbook playbook.yml --vault-password-file .vault_pass
-```
-
-A first run takes a few minutes. When it finishes, open `http://<server public IP>` in a browser and Findr loads.
+It finishes by waiting until `/api/ready` answers on the VM, so a run only succeeds if Findr is really up and talking to the database. Then open `APP_URL` in a browser.
 
 ### Check it's safe to run again
 
-Run the same command a second time. Every task should come back `ok`, and the recap at the end should show **`changed=0`** and **`failed=0`**. That shows the playbook is idempotent: it only changes something when the server is different from what the playbook describes.
+Run the same command a second time. The recap at the end should show **`changed=0`** and **`failed=0`**. That shows the playbook is idempotent: it only changes something when the server is different from what the playbook describes.
 
-### Other useful commands
+## What deploy.yml does
+
+It runs on the `app_server` group as root (`become: true`), in this order:
+
+1. **Checks the settings.** Stops early if a required environment variable is missing.
+2. **Installs git and curl.**
+3. **`swap`** ([`roles/swap`](roles/swap/tasks/main.yml)): adds a 2 GB swap file, so the small VM doesn't run out of memory. Only created if it isn't there yet.
+4. **`docker`** ([`roles/docker`](roles/docker/tasks/main.yml)): adds Docker's official apt repository and installs Docker Engine, the **Docker Compose** plugin and `python3-docker`, which Ansible needs to manage containers. Starts Docker and turns it on at boot.
+5. **`hardening`** ([`roles/hardening`](roles/hardening/tasks/main.yml)):
+   - **Firewall (UFW):** blocks all incoming traffic except SSH (22, rate-limited), HTTP (80) and HTTPS (443).
+   - **SSH:** no root login and no password login, so only keys work. The new settings are checked with `sshd -t` before SSH restarts, so a mistake can't lock us out.
+   - **fail2ban:** bans an IP for 1 hour after 5 failed logins in 10 minutes.
+   - This sits behind the Azure firewalls from Terraform, so the server is protected even if one layer is set up wrong.
+6. **`app_deploy`** ([`roles/app_deploy`](roles/app_deploy/tasks/main.yml)), the step that gets Findr serving traffic:
+   - Writes the settings to `/opt/findr/.env`, readable only by root. Secrets are hidden from the output (`no_log`).
+   - Writes `/opt/findr/docker-compose.yml` from a [template](roles/app_deploy/templates/docker-compose.yml.j2): the image for this commit, port 80 for the Load Balancer, port 9464 for metrics, a health check, restart after a crash or reboot, and log rotation.
+   - Logs in to ACR with the short-lived token. No registry password is stored on the server.
+   - Pulls the image and starts it with `docker compose up -d`.
+   - Waits until `/api/ready` returns `200`.
+
+## Monitoring
+
+`monitoring.yml` installs node_exporter on the app VM (port 9100, open only to the monitoring VM). It then copies [`monitoring/`](../monitoring) to the monitoring VM and starts Prometheus, Grafana, Alertmanager and blackbox_exporter with `docker compose up -d`. It needs `BASTION_IP`, `APP_PRIVATE_IP` and `MONITORING_PRIVATE_IP` (`terraform output -raw monitoring_private_ip`).
 
 ```bash
-ansible-playbook playbook.yml --ask-vault-pass --check --diff   # show what would change, without changing it
-ansible-playbook playbook.yml --ask-vault-pass --list-tasks     # list every task in order
+ansible-playbook monitoring.yml
 ```
 
-`--check` works best once the server has been set up once, because some tasks depend on packages that earlier tasks install.
+Grafana has no public address. Open it through the bastion, keep this running, then browse to http://localhost:3000:
 
-## What each role does
-
-[`playbook.yml`](playbook.yml) runs four roles on the `web` group as root (`become: true`), in this order.
-
-### 1. `swap`: add extra memory
-
-[`roles/swap`](roles/swap/tasks/main.yml)
-
-- The server has about 1 GB of memory, and MongoDB and the app need more than that when they start. This role creates a 2 GB swap file (`/swapfile`), which the server can use as extra memory.
-- Only root can read the file, and it stays on after a restart (through `/etc/fstab`).
-- It checks first, and only creates or turns on the swap file if it isn't there yet, so a second run changes nothing.
-- The file path and size are in [`defaults/main.yml`](roles/swap/defaults/main.yml).
-
-### 2. `docker`: install Docker
-
-[`roles/docker`](roles/docker/tasks/main.yml)
-
-- Adds Docker's official apt repository and its signing key.
-- Installs Docker Engine, the Compose plugin, and `python3-docker`, which Ansible needs to manage containers.
-- Starts Docker and turns it on at boot.
-- Adds the login user to the `docker` group, so it can run `docker` without `sudo`.
-
-### 3. `hardening`: lock the server down
-
-[`roles/hardening`](roles/hardening/tasks/main.yml)
-
-- **Firewall (UFW):** blocks all incoming traffic except SSH (22), HTTP (80) and HTTPS (443). SSH uses `limit`, which slows down anyone who connects too often. The open web ports are listed in [`defaults/main.yml`](roles/hardening/defaults/main.yml).
-- **SSH:** turns off root login and password login, so only SSH keys work. It checks the new settings with `sshd -t` before restarting SSH, so a mistake can't lock us out.
-- **fail2ban:** bans an IP for 1 hour after 5 failed logins in 10 minutes.
-- SSH and fail2ban only restart when their settings change, through [handlers](roles/hardening/handlers/main.yml).
-
-This sits behind the Azure firewall from Terraform, which already limits SSH to our IP. The two layers protect the server even if one of them is set up wrong.
-
-### 4. `findr`: deploy the app
-
-[`roles/findr`](roles/findr/tasks/main.yml)
-
-- Logs in to GitHub Container Registry, only if a token is set. The login is hidden from the output (`no_log`).
-- Creates a private Docker network, `findr-net`.
-- Starts **MongoDB 7** (`findr-db`) on that network, with its data in the `findr-mongo-data` volume. It has no published port, so it can't be reached from the internet.
-- Pulls the Findr image and starts it (`findr-app`), publishing port 80 to the app's port 3000. The database password comes from the vault.
-- Both containers restart on their own after a crash or reboot (`unless-stopped`).
-- Waits until the app answers on port 80, so the run only succeeds if Findr is really up.
-
-## Tested on the real server
-
-We ran the playbook on the Azure VM that Terraform created (`4.221.171.155`, Ubuntu). Findr opens at the server's public IP on port 80, with the app and MongoDB both running in Docker:
-
-![Findr running at the server's public IP after the playbook ran](../docs/images/ansible-app-on-server.png)
+```bash
+ssh -i ~/.ssh/findr -N -L 3000:$MONITORING_PRIVATE_IP:3000 azureuser@$BASTION_IP
+```
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| `UNREACHABLE` / `Permission denied (publickey)` | Check the IP in `hosts.ini`, check that the key in `vars.yml` pairs with the one Terraform used, and run `chmod 600` on the key |
-| `Connection timed out` | The Terraform firewall only allows SSH from `my_ip_cidr`. If your IP changed, ask Bonae to update it and apply again |
-| `Host key verification failed` / `REMOTE HOST IDENTIFICATION HAS CHANGED` | The server was created again and has a new key. Run `ssh-keygen -R <IP>` and try again |
-| `--graph` shows no hosts in `@web` | Run `az login`, check `az account show`, and check the VM exists in `findr-dev-rg` |
-| `[WARNING]: Ansible is being run in a world writable directory` | You're in `/mnt/c/...`. Clone the repo into your WSL home folder instead |
+| `Connection timed out` to the bastion | The bastion only allows SSH from `allowed_ssh_cidrs`. If your IP changed, update it in `terraform.tfvars` and apply again |
+| `UNREACHABLE` / `Permission denied (publickey)` | Check `BASTION_IP` and `APP_PRIVATE_IP`, check the key is `findr-team`, and run `chmod 600` on it |
+| `Host key verification failed` / `REMOTE HOST IDENTIFICATION HAS CHANGED` | The VM was created again and has a new key. Run `ssh-keygen -R <IP>` and try again |
+| `Set ACR_LOGIN_SERVER, ACR_TOKEN and MONGODB_URI first` | One of them is empty. ACR tokens last about 3 hours, so get a new one |
+| `[WARNING]: Ansible is being run in a world writable directory` | You're in `/mnt/c/...`. Clone the repo into your WSL home folder, or run `export ANSIBLE_CONFIG=$PWD/ansible.cfg` |
 | `couldn't resolve module/action 'community.docker...'` | Run `ansible-galaxy collection install -r requirements.yml` |
-| `Attempting to decrypt but no vault secrets found` | Add `--ask-vault-pass` |
-| The app check times out | SSH in and run `docker logs findr-app`. Make sure `findr_image_tag` is a tag that exists in GHCR |
+| The `/api/ready` wait times out | SSH to the app VM and run `docker compose -f /opt/findr/docker-compose.yml logs`. Check `IMAGE_TAG` exists in ACR and `MONGODB_URI` is right |
 
-## Removing the app
+## Formative 3: single VM (no longer used)
 
-Ansible doesn't delete anything. When testing is done, Bonae deletes the whole server with `terraform destroy` (see [`terraform/README.md`](../terraform/README.md)).
+In Formative 3, Findr ran on one VM with a public IP, with MongoDB in a container next to the app and the image in GitHub Container Registry. That setup is kept for history, and nothing in CD uses it:
 
-## Deploying to Azure (bastion setup)
+- `playbook.yml` ran `swap`, `docker`, `hardening` and `findr` on the `web` group.
+- `inventory/hosts.ini` (static IP) and `inventory/azure_rm.yml` (dynamic inventory: Azure VMs tagged `project=findr`) found the server.
+- `group_vars/web/vault.yml` held the MongoDB password and the GHCR login, encrypted with Ansible Vault.
+- `roles/findr` started MongoDB 7 and the app on a private Docker network.
 
-The app VM has no public IP, so Ansible jumps through the bastion (`group_vars/app_server/vars.yml`).
-`deploy.yml` installs Docker, Docker Compose, git and curl, hardens the VM, logs in to ACR,
-pulls the image for the given tag and runs `docker compose up -d` in `/opt/findr`. Safe to run twice.
+The Summative replaced it: the app VM moved to a private subnet behind a bastion and a Load Balancer, MongoDB moved to Cosmos DB, the image moved to ACR, and secrets moved from the vault to GitHub secrets passed in by CD.
 
-Environment variables it needs:
-`BASTION_IP`, `APP_PRIVATE_IP`, `APP_URL`, `ACR_LOGIN_SERVER` (from `terraform output`),
-`MONGODB_URI` (`terraform output -raw mongodb_uri`, secret),
-`ACR_TOKEN` (`az acr login -n <acr_name> --expose-token --query accessToken -o tsv`),
-`IMAGE_TAG` (the commit SHA in CD), and optionally `SSH_KEY_FILE` (default `~/.ssh/findr`).
+We ran that playbook on the F3 Azure VM. Findr opened at the server's public IP on port 80:
 
-    cd ansible
-    export ANSIBLE_CONFIG=$PWD/ansible.cfg   # needed on WSL /mnt/c
-    ansible-galaxy collection install -r requirements.yml
-    ansible app_server -m ping
-    ansible-playbook deploy.yml
-
-`playbook.yml` and `inventory/` are the Formative 3 setup (one VM with a public IP), kept for history.
-
-## Monitoring (#125)
-
-`monitoring.yml` installs node_exporter on the app VM (port 9100, open only to the monitoring VM)
-and copies `monitoring/` to the monitoring VM, then starts Prometheus, Grafana, Alertmanager and
-blackbox_exporter with `docker compose up -d`. Also needs `MONITORING_PRIVATE_IP`.
-
-    ansible-playbook monitoring.yml
-
-Open Grafana through the bastion, then browse to http://localhost:3000:
-
-    ssh -i ~/.ssh/findr -L 3000:$MONITORING_PRIVATE_IP:3000 azureuser@$BASTION_IP
+![Findr running at the server's public IP after the Formative 3 playbook ran](../docs/images/ansible-app-on-server.png)
