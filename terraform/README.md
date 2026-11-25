@@ -72,6 +72,8 @@ terraform/
 ```
   Never share or commit the private key (the file without `.pub`).
 
+
+
 ## Shared state
 
 Terraform remembers what it built in a **state** file. We keep it in Azure Storage, not on a laptop, so everyone (and the CD pipeline) works on the same infrastructure.
