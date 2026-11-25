@@ -6,7 +6,7 @@
 [![Deploy to Production](https://github.com/findr1/findr/actions/workflows/cd.yml/badge.svg)](https://github.com/findr1/findr/actions/workflows/cd.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-**Live app:** http://102.37.96.165 · **Demo video:** _coming soon_
+**Live app:** http://102.37.96.165 · **Demo video:** https://youtu.be/4PnOsdXiTU8
 
 ## Table of Contents
 
@@ -431,9 +431,7 @@ Every deploy also posts its result to the same channel as **Findr CD**, so the t
 
 ## Video Demo
 
-<!-- TODO(Shina): add the unlisted YouTube link once it is uploaded. -->
-
-_Coming soon._
+Watch the demo on YouTube: https://youtu.be/4PnOsdXiTU8
 
 ## Links
 
