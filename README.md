@@ -6,7 +6,7 @@
 [![Deploy to Production](https://github.com/findr1/findr/actions/workflows/cd.yml/badge.svg)](https://github.com/findr1/findr/actions/workflows/cd.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-**Live app:** http://102.37.96.165 · **Demo video:** [Watch on YouTube](#video-demo) <!-- TODO(Shina): replace #video-demo with the unlisted YouTube link -->
+**Live app:** http://102.37.96.165 · **Demo video:** https://youtu.be/4PnOsdXiTU8
 
 ## Table of Contents
 
@@ -164,6 +164,7 @@ findr/
 
    Note `app_url` (the site), `bastion_public_ip`, `ssh_bastion_command` and `ssh_app_command` (to log in), `grafana_tunnel_command` and `acr_login_server`. The full guide is in [terraform/README.md](terraform/README.md).
 
+
 3. **Let GitHub Actions log in to Azure**
 
    CD logs in to Azure as the managed identity `findr-github-cd`, with OIDC. No cloud password is stored anywhere: a federated credential tells Azure to trust GitHub's short-lived tokens, but only from this repository's `main` branch. Create it once, in a resource group that `terraform destroy` doesn't delete (such as `findr-tfstate-rg`):
@@ -184,27 +185,28 @@ findr/
 
    Put the `principalId` in `cd_principal_id` in `terraform.tfvars` and run `terraform apply` again. Terraform then gives the identity only what CD needs:
 
-   | Role                | On                     | Why                                                    |
-   | ------------------- | ---------------------- | ------------------------------------------------------ |
-   | AcrPush             | The container registry | Push the new image                                     |
-   | Reader              | `findr-dev-rg`         | Find the registry and the server addresses             |
-   | Network Contributor | The bastion firewall   | Open SSH for the runner during a deploy, then close it |
+   | Role | On | Why |
+   | ---- | -- | --- |
+   | AcrPush | The container registry | Push the new image |
+   | Reader | `findr-dev-rg` | Find the registry and the server addresses |
+   | Network Contributor | The bastion firewall | Open SSH for the runner during a deploy, then close it |
 
    It also needs **Storage Blob Data Contributor** on the state storage, given once by hand (the command is in [terraform/README.md](terraform/README.md#give-a-teammate-access)).
+
 
 4. **Add the GitHub secrets**
 
    In GitHub, go to **Settings → Secrets and variables → Actions → New repository secret** and add:
 
-   | Secret                  | What it is                                                                 | Where to get it                                                                                                      |
-   | ----------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-   | `AZURE_CLIENT_ID`       | The `findr-github-cd` identity                                             | `clientId` from the `az identity show` command in step 3                                                             |
-   | `AZURE_TENANT_ID`       | Our Azure tenant                                                           | `az account show --query tenantId -o tsv`                                                                            |
-   | `AZURE_SUBSCRIPTION_ID` | Our Azure subscription                                                     | `az account show --query id -o tsv`                                                                                  |
-   | `SSH_PRIVATE_KEY`       | The private key the VMs were built with, so CD can SSH through the bastion | The whole private key file, with no passphrase                                                                       |
-   | `MONGODB_URI`           | The Cosmos DB connection string                                            | `terraform output -raw mongodb_uri`                                                                                  |
-   | `ADMIN_TOKEN`           | The password for the admin (moderation) routes                             | Any long random string you choose                                                                                    |
-   | `DISCORD_WEBHOOK_URL`   | Where CD posts each deploy's result                                        | In Discord: **Edit Channel → Integrations → Webhooks → Copy Webhook URL**. Optional: without it CD skips the message |
+   | Secret | What it is | Where to get it |
+   | ------ | ---------- | --------------- |
+   | `AZURE_CLIENT_ID` | The `findr-github-cd` identity | `clientId` from the `az identity show` command in step 3 |
+   | `AZURE_TENANT_ID` | Our Azure tenant | `az account show --query tenantId -o tsv` |
+   | `AZURE_SUBSCRIPTION_ID` | Our Azure subscription | `az account show --query id -o tsv` |
+   | `SSH_PRIVATE_KEY` | The private key the VMs were built with, so CD can SSH through the bastion | The whole private key file, with no passphrase |
+   | `MONGODB_URI` | The Cosmos DB connection string | `terraform output -raw mongodb_uri` |
+   | `ADMIN_TOKEN` | The password for the admin (moderation) routes | Any long random string you choose |
+   | `DISCORD_WEBHOOK_URL` | Where CD posts each deploy's result | In Discord: **Edit Channel → Integrations → Webhooks → Copy Webhook URL**. Optional: without it CD skips the message |
 
 5. **Deploy**
 
