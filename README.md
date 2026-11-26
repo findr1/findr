@@ -74,14 +74,14 @@ Everything is built by Terraform in one resource group, `findr-dev-rg`, in South
 
 ### Security Controls at a Glance
 
-| Where | What is allowed in |
-| ----- | ------------------ |
-| **Bastion VM** | SSH (22) only from the team's IPs (`allowed_ssh_cidrs`). During a deploy, CD adds a rule for the runner's IP and removes it when it finishes |
-| **App VM** | Port 80 from the internet, which can only arrive through the Load Balancer because the VM has no public IP. The Load Balancer's health check. SSH only from the bastion subnet. Metrics (9100, 9464) only from the monitoring VM |
-| **Monitoring VM** | Grafana (3000) and SSH only from the bastion subnet |
-| **Cosmos DB** | Only the private subnet. The internet and our laptops are refused |
-| **ACR** | No admin password. The app VM can only pull (AcrPull), CD can only push (AcrPush) |
-| **Everything else** | Blocked by a `deny-all-inbound` rule on both firewalls |
+| Where               | What is allowed in                                                                                                                                                                                                               |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bastion VM**      | SSH (22) only from the team's IPs (`allowed_ssh_cidrs`). During a deploy, CD adds a rule for the runner's IP and removes it when it finishes                                                                                     |
+| **App VM**          | Port 80 from the internet, which can only arrive through the Load Balancer because the VM has no public IP. The Load Balancer's health check. SSH only from the bastion subnet. Metrics (9100, 9464) only from the monitoring VM |
+| **Monitoring VM**   | Grafana (3000) and SSH only from the bastion subnet                                                                                                                                                                              |
+| **Cosmos DB**       | Only the private subnet. The internet and our laptops are refused                                                                                                                                                                |
+| **ACR**             | No admin password. The app VM can only pull (AcrPull), CD can only push (AcrPush)                                                                                                                                                |
+| **Everything else** | Blocked by a `deny-all-inbound` rule on both firewalls                                                                                                                                                                           |
 
 ## Technology Stack
 
@@ -101,7 +101,7 @@ Everything is built by Terraform in one resource group, `findr-dev-rg`, in South
 findr/
 ├── .github/workflows/
 │   ├── ci.yml               # CI on every PR: lint, tests, npm audit, Trivy, container check
-│   ├── terraform-scan.yml   # Checkov scan of the Terraform code
+│   ├── terraform-scan.yml   # Terraform format, validate and Checkov scan
 │   └── cd.yml               # CD on merge to main: re-run CI, push to ACR, deploy with Ansible
 ├── terraform/               # Azure infrastructure (see terraform/README.md)
 │   └── modules/             # network, security, compute, loadbalancer, registry, database
@@ -297,24 +297,25 @@ The `Dockerfile` has three stages: build the website, install the API packages w
 
 **Runs on:** every push to a branch other than `main`, and every pull request into `main`. A new push cancels the run still going on the same branch.
 
-| Job | What it does | Fails when |
-| --- | ------------ | ---------- |
-| **Lint and test (backend)** | ESLint, then the Jest tests. Keeps the test results as an artifact | A lint error or a failing test |
-| **Lint and test (frontend)** | ESLint, then builds the website. Keeps the build as an artifact | A lint error or the build breaks |
-| **Dependency scan** (backend and frontend) | `npm audit` on the packages | A HIGH or CRITICAL problem |
-| **Image scan (Trivy)** | Builds the Docker image and scans it | A HIGH or CRITICAL problem that already has a fix |
-| **Docker build** | Builds the image and checks the container starts and `/api/health` answers. Only runs after the tests and both scans pass | The container doesn't start |
-| **Terraform scan (Checkov)** | Scans the Terraform code ([terraform-scan.yml](.github/workflows/terraform-scan.yml)) | Any failed check. Accepted findings are skipped in the code with a written reason |
+| Job                                        | What it does                                                                                                                                              | Fails when                                                                        |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **Lint and test (backend)**                | ESLint, then the Jest tests. Keeps the test results as an artifact                                                                                        | A lint error or a failing test                                                    |
+| **Lint and test (frontend)**               | ESLint, then builds the website. Keeps the build as an artifact                                                                                           | A lint error or the build breaks                                                  |
+| **Dependency scan** (backend and frontend) | `npm audit` on the packages                                                                                                                               | A HIGH or CRITICAL problem                                                        |
+| **Image scan (Trivy)**                     | Builds the Docker image and scans it                                                                                                                      | A HIGH or CRITICAL problem that already has a fix                                 |
+| **Docker build**                           | Builds the image and checks the container starts and `/api/health` answers. Only runs after the tests and both scans pass                                 | The container doesn't start                                                       |
+| **Terraform format and validate**          | `terraform fmt -check`, then `terraform validate` on the whole configuration and its modules ([terraform-scan.yml](.github/workflows/terraform-scan.yml)) | A file isn't formatted, or the configuration has an error                         |
+| **Terraform scan (Checkov)**               | Scans the Terraform code ([terraform-scan.yml](.github/workflows/terraform-scan.yml))                                                                     | Any failed check. Accepted findings are skipped in the code with a written reason |
 
 Each scan keeps its full report as an artifact, even when it fails. Accepted findings and the reasons are in [SECURITY.md](SECURITY.md).
 
-**All seven checks are required to merge**, and `main` only takes changes through a reviewed pull request. The rules are in [docs/branch-protection.md](docs/branch-protection.md).
+**All eight checks are required to merge**, and `main` only takes changes through a reviewed pull request. The rules are in [docs/branch-protection.md](docs/branch-protection.md).
 
 ### CD Pipeline
 
 **Runs on:** a merge into `main` only, never on pull requests ([cd.yml](.github/workflows/cd.yml)). One deploy runs at a time. A new merge waits for the running deploy to finish instead of cancelling it halfway.
 
-1. **Check again:** runs all of CI and the Checkov scan on the merged code. Nothing is deployed unless every check passes
+1. **Check again:** runs all of CI and the Terraform checks (format, validate, Checkov) on the merged code. Nothing is deployed unless every check passes
 2. **Log in to Azure** with OIDC as `findr-github-cd`. No cloud password is stored
 3. **Build and push** the image to ACR, tagged with the commit SHA, so every running version can be traced to its commit
 4. **Open the bastion firewall** for this runner's IP only (a temporary rule at priority 110). The bastion is closed to the internet between deploys
@@ -331,12 +332,12 @@ A deploy takes about **8 to 10 minutes** from merge to the Discord message.
 
 Four scans run on every pull request and again before every deploy. Each one blocks the merge when it fails:
 
-| Scan | What it checks | Blocks on |
-| ---- | -------------- | --------- |
-| `npm audit` | The backend and frontend packages | HIGH or CRITICAL |
-| Trivy | The Docker image (OS packages and Node packages) | HIGH or CRITICAL with a fix available |
-| Checkov | The Terraform code | Any failed check, unless skipped in the code with a reason |
-| Container check | The image starts and `/api/health` answers | Any failure |
+| Scan            | What it checks                                   | Blocks on                                                  |
+| --------------- | ------------------------------------------------ | ---------------------------------------------------------- |
+| `npm audit`     | The backend and frontend packages                | HIGH or CRITICAL                                           |
+| Trivy           | The Docker image (OS packages and Node packages) | HIGH or CRITICAL with a fix available                      |
+| Checkov         | The Terraform code                               | Any failed check, unless skipped in the code with a reason |
+| Container check | The image starts and `/api/health` answers       | Any failure                                                |
 
 The Trivy action is pinned to a commit, not a tag, because its tags were hijacked in March 2026.
 
@@ -362,10 +363,10 @@ The scan findings, accepted risks and how to report a problem are in [SECURITY.m
 
 ### Health Checks
 
-| Endpoint | What it checks | Used by |
-| -------- | -------------- | ------- |
-| `/api/health` | The app is running | The Load Balancer health probe, the Docker health check |
-| `/api/ready` | The app is running **and** the database answers within 2 seconds. Returns `503` if not | The CD smoke test, Prometheus's website check |
+| Endpoint      | What it checks                                                                         | Used by                                                 |
+| ------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `/api/health` | The app is running                                                                     | The Load Balancer health probe, the Docker health check |
+| `/api/ready`  | The app is running **and** the database answers within 2 seconds. Returns `503` if not | The CD smoke test, Prometheus's website check           |
 
 ### Metrics
 
@@ -390,18 +391,20 @@ terraform output -raw grafana_tunnel_command   # copy and run it, keep it open
 
 Then open `http://localhost:3000`.
 
+![The Findr overview dashboard in Grafana: website, database and app up, requests by page, 5xx error rate at 0%, response time, and server CPU and memory](docs/images/grafana-dashboard.png)
+
 ### Alert Rules
 
-| Alert | When | Severity |
-| ----- | ---- | -------- |
-| SiteDown | The public site hasn't answered for 2 minutes | critical |
-| AppNotReporting | Prometheus can't read `/metrics` for 2 minutes | critical |
-| DatabaseDown | The app can't reach Cosmos DB for 1 minute | critical |
-| HighErrorRate | Over 5% of requests are 5xx for 5 minutes | warning |
-| SlowResponses | 1 in 20 requests takes over 1 second for 5 minutes | warning |
-| HighCPU | CPU above 85% for 10 minutes | warning |
-| HighMemory | Memory above 90% for 10 minutes | warning |
-| DiskAlmostFull | Under 10% disk left for 10 minutes | warning |
+| Alert           | When                                               | Severity |
+| --------------- | -------------------------------------------------- | -------- |
+| SiteDown        | The public site hasn't answered for 2 minutes      | critical |
+| AppNotReporting | Prometheus can't read `/metrics` for 2 minutes     | critical |
+| DatabaseDown    | The app can't reach Cosmos DB for 1 minute         | critical |
+| HighErrorRate   | Over 5% of requests are 5xx for 5 minutes          | warning  |
+| SlowResponses   | 1 in 20 requests takes over 1 second for 5 minutes | warning  |
+| HighCPU         | CPU above 85% for 10 minutes                       | warning  |
+| HighMemory      | Memory above 90% for 10 minutes                    | warning  |
+| DiskAlmostFull  | Under 10% disk left for 10 minutes                 | warning  |
 
 The rules are in [monitoring/prometheus/alert-rules.yml](monitoring/prometheus/alert-rules.yml).
 
@@ -409,29 +412,35 @@ The rules are in [monitoring/prometheus/alert-rules.yml](monitoring/prometheus/a
 
 Alertmanager sends every alert to the team's `#findr-alerts` Discord channel as **Findr Alerts**, and posts again when the problem is fixed. Related alerts are grouped, and an alert that is still firing is repeated every 4 hours. The webhook URL is never in git: Alertmanager reads it from `monitoring/alertmanager/secrets/discord-webhook`, a file git ignores.
 
-Every deploy also posts its result to the same channel as **Findr CD**, so the team sees both what was released and when something breaks.
+Every deploy also posts its result to the same channel as **Findr CD**, so the team sees both what was released and when something breaks. Below, a deploy of `920a38a` failed, and the next run of the same commit went live:
+
+![Findr CD posting a failed deploy and then a successful one to #findr-alerts](docs/images/discord-deploy-alerts.png)
 
 ## Challenges and Solutions
 
-| Challenge | How we solved it |
-| --------- | ---------------- |
-| **GitHub couldn't log in to Azure.** Student accounts can't create app registrations, and later the login failed because GitHub changed the format of the repository name it sends. | We used a managed identity with OIDC instead (no password), and added a second trust rule in the new format. It still only trusts `main`. |
-| **The pipeline's SSH key didn't work.** The secret first held the public key, then a cut-off private key, then one with Windows line endings. | We saved the full private key. The pipeline now removes Windows line endings, checks the key, and prints its name (never the key itself). |
-| **Keeping the bastion closed.** The runner's IP changes on every run, and a new firewall rule takes a few seconds to work. | CD opens SSH for the runner's IP only, waits until the bastion answers, and always closes the rule at the end, even if the deploy fails. |
-| **The private VMs had no internet.** With no public IP, they couldn't download packages or pull images. | The Load Balancer's outbound rule gives them a way out, without opening any way in. |
-| **CI cancelled itself inside CD.** When CD reused the CI workflow, both runs shared one concurrency group and cancelled each other. | We gave each workflow a fixed concurrency group name. |
-| **Empty registry address.** Azure printed the registry name and address on two lines, and the script only read the first. | We read both on one line, and the pipeline stops with a clear message if the address is empty. |
-| **Shared Terraform state.** An old local `terraform.tfvars` would have rebuilt both VMs, and an old branch tried to delete the database. | We always pull `main` first and read the plan's "destroy" count before `apply`. |
-| **Cosmos DB is not exactly MongoDB.** It needs an index for every sort and only allows unique indexes on empty collections. | Terraform creates the collections and indexes before any data is added. No app code changed. |
-| **Keeping metrics private.** `/metrics` must not be on the public website. | The app serves it on its own port (9464), which only the monitoring VM can reach. |
-| **Alerts didn't reach Discord.** They showed in Grafana but were still "pending", and no webhook was set. | We documented pending vs firing and set the webhook outside the code. |
-| **The Trivy action was hijacked.** In March 2026, attackers took over its version tags to steal CI secrets. | We pinned it to the commit of v0.35.0, the one release that wasn't affected, so its code can't change under us. |
-| **npm audit flagged our dev tools.** The findings were in ESLint, Jest and the shadcn CLI, which never reach the live app, and shadcn was wrongly listed as an app dependency. | We moved shadcn to devDependencies, and wrote up the low-severity findings as accepted risks, with reasons, in [SECURITY.md](SECURITY.md). |
-| **Sharing secrets while debugging.** Keys and connection strings ended up in chat. | Secrets now go only into GitHub secrets, and any leaked key is replaced. |
+| Challenge                                                                                                                                                                           | How we solved it                                                                                                                           |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **GitHub couldn't log in to Azure.** Student accounts can't create app registrations, and later the login failed because GitHub changed the format of the repository name it sends. | We used a managed identity with OIDC instead (no password), and added a second trust rule in the new format. It still only trusts `main`.  |
+| **The pipeline's SSH key didn't work.** The secret first held the public key, then a cut-off private key, then one with Windows line endings.                                       | We saved the full private key. The pipeline now removes Windows line endings, checks the key, and prints its name (never the key itself).  |
+| **Keeping the bastion closed.** The runner's IP changes on every run, and a new firewall rule takes a few seconds to work.                                                          | CD opens SSH for the runner's IP only, waits until the bastion answers, and always closes the rule at the end, even if the deploy fails.   |
+| **The private VMs had no internet.** With no public IP, they couldn't download packages or pull images.                                                                             | The Load Balancer's outbound rule gives them a way out, without opening any way in.                                                        |
+| **CI cancelled itself inside CD.** When CD reused the CI workflow, both runs shared one concurrency group and cancelled each other.                                                 | We gave each workflow a fixed concurrency group name.                                                                                      |
+| **Empty registry address.** Azure printed the registry name and address on two lines, and the script only read the first.                                                           | We read both on one line, and the pipeline stops with a clear message if the address is empty.                                             |
+| **Shared Terraform state.** An old local `terraform.tfvars` would have rebuilt both VMs, and an old branch tried to delete the database.                                            | We always pull `main` first and read the plan's "destroy" count before `apply`.                                                            |
+| **Cosmos DB is not exactly MongoDB.** It needs an index for every sort and only allows unique indexes on empty collections.                                                         | Terraform creates the collections and indexes before any data is added. No app code changed.                                               |
+| **Keeping metrics private.** `/metrics` must not be on the public website.                                                                                                          | The app serves it on its own port (9464), which only the monitoring VM can reach.                                                          |
+| **Alerts didn't reach Discord.** They showed in Grafana but were still "pending", and no webhook was set.                                                                           | We documented pending vs firing and set the webhook outside the code.                                                                      |
+| **The Trivy action was hijacked.** In March 2026, attackers took over its version tags to steal CI secrets.                                                                         | We pinned it to the commit of v0.35.0, the one release that wasn't affected, so its code can't change under us.                            |
+| **npm audit flagged our dev tools.** The findings were in ESLint, Jest and the shadcn CLI, which never reach the live app, and shadcn was wrongly listed as an app dependency.      | We moved shadcn to devDependencies, and wrote up the low-severity findings as accepted risks, with reasons, in [SECURITY.md](SECURITY.md). |
+| **Sharing secrets while debugging.** Keys and connection strings ended up in chat.                                                                                                  | Secrets now go only into GitHub secrets, and any leaked key is replaced.                                                                   |
 
 ## Video Demo
 
-Watch the demo on YouTube: https://youtu.be/4PnOsdXiTU8
+<!-- TODO(Shina): replace YOUTUBE_LINK below with the unlisted YouTube link, and the link in the line under the title. -->
+
+**[Watch the Summative demo on YouTube](YOUTUBE_LINK)**
+
+The video follows the 10 demo prompts in order, from the project board and branch protection (Formative 1) to a live deploy through the CD pipeline, monitoring, and our reflection.
 
 ## Links
 

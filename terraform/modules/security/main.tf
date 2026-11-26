@@ -10,6 +10,7 @@ resource "azurerm_network_security_group" "bastion" {
   tags                = var.tags
 }
 
+
 # SSH only from our own IPs
 resource "azurerm_network_security_rule" "bastion_ssh" {
   name                        = "allow-ssh-from-allowed-ips"
